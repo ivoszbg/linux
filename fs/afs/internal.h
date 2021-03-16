@@ -755,6 +755,7 @@ struct afs_vnode_param {
 	bool			update_ctime:1;	/* Need to update the ctime */
 	bool			set_size:1;	/* Must update i_size */
 	bool			op_unlinked:1;	/* True if file was unlinked by op */
+	bool			speculative:1;	/* T if speculative status fetch (no vnode lock) */
 };
 
 /*
@@ -1148,8 +1149,9 @@ extern struct inode *afs_iget(struct afs_operation *, struct afs_vnode_param *);
 extern struct inode *afs_root_iget(struct super_block *, struct key *);
 extern bool afs_check_validity(struct afs_vnode *);
 extern int afs_validate(struct afs_vnode *, struct key *);
-extern int afs_getattr(const struct path *, struct kstat *, u32, unsigned int);
-extern int afs_setattr(struct dentry *, struct iattr *);
+extern int afs_getattr(struct user_namespace *mnt_userns, const struct path *,
+		       struct kstat *, u32, unsigned int);
+extern int afs_setattr(struct user_namespace *mnt_userns, struct dentry *, struct iattr *);
 extern void afs_evict_inode(struct inode *);
 extern int afs_drop_inode(struct inode *);
 
@@ -1360,7 +1362,7 @@ extern void afs_zap_permits(struct rcu_head *);
 extern struct key *afs_request_key(struct afs_cell *);
 extern struct key *afs_request_key_rcu(struct afs_cell *);
 extern int afs_check_permit(struct afs_vnode *, struct key *, afs_access_t *);
-extern int afs_permission(struct inode *, int);
+extern int afs_permission(struct user_namespace *, struct inode *, int);
 extern void __exit afs_clean_up_permit_cache(void);
 
 /*
@@ -1507,7 +1509,6 @@ extern int afs_launder_page(struct page *);
  * xattr.c
  */
 extern const struct xattr_handler *afs_xattr_handlers[];
-extern ssize_t afs_listxattr(struct dentry *, char *, size_t);
 
 /*
  * yfsclient.c
