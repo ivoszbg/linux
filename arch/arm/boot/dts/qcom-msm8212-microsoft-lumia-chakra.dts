@@ -11,3 +11,8 @@
 	model = "Microsoft Lumia 535";
 	compatible = "microsoft,chakra","qcom,msm8212";
 };
+
+&sdhc_1 {
+		status = "ok";
+};
+
