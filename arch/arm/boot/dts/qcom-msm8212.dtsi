@@ -38,6 +38,11 @@
 			device_type = "cpu";
 			reg = <0>;
 			next-level-cache = <&L2>;
+
+			L2: l2-cache {
+				compatible = "cache";
+				cache-level = <2>;
+			};
 		};
 
 		CPU1: cpu@1 {
@@ -59,11 +64,6 @@
 			device_type = "cpu";
 			reg = <3>;
 			next-level-cache = <&L2>;
-		};
-
-		L2: l2-cache {
-			compatible = "cache";
-			cache-level = <2>;
 		};
 	};
 
