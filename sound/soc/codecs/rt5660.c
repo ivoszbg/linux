@@ -1046,7 +1046,7 @@ static int rt5660_set_dai_pll(struct snd_soc_dai *dai, int pll_id, int source,
 
 	ret = rl6231_pll_calc(freq_in, freq_out, &pll_code);
 	if (ret < 0) {
-		dev_err(component->dev, "Unsupport input clock %d\n", freq_in);
+		dev_err(component->dev, "Unsupported input clock %d\n", freq_in);
 		return ret;
 	}
 
@@ -1057,8 +1057,8 @@ static int rt5660_set_dai_pll(struct snd_soc_dai *dai, int pll_id, int source,
 	snd_soc_component_write(component, RT5660_PLL_CTRL1,
 		pll_code.n_code << RT5660_PLL_N_SFT | pll_code.k_code);
 	snd_soc_component_write(component, RT5660_PLL_CTRL2,
-		(pll_code.m_bp ? 0 : pll_code.m_code) << RT5660_PLL_M_SFT |
-		pll_code.m_bp << RT5660_PLL_M_BP_SFT);
+		((pll_code.m_bp ? 0 : pll_code.m_code) << RT5660_PLL_M_SFT) |
+		(pll_code.m_bp << RT5660_PLL_M_BP_SFT));
 
 	rt5660->pll_in = freq_in;
 	rt5660->pll_out = freq_out;
@@ -1266,8 +1266,7 @@ static int rt5660_parse_dt(struct rt5660_priv *rt5660, struct device *dev)
 	return 0;
 }
 
-static int rt5660_i2c_probe(struct i2c_client *i2c,
-		    const struct i2c_device_id *id)
+static int rt5660_i2c_probe(struct i2c_client *i2c)
 {
 	struct rt5660_platform_data *pdata = dev_get_platdata(&i2c->dev);
 	struct rt5660_priv *rt5660;
@@ -1343,7 +1342,7 @@ static struct i2c_driver rt5660_i2c_driver = {
 		.acpi_match_table = ACPI_PTR(rt5660_acpi_match),
 		.of_match_table = of_match_ptr(rt5660_of_match),
 	},
-	.probe = rt5660_i2c_probe,
+	.probe_new = rt5660_i2c_probe,
 	.id_table = rt5660_i2c_id,
 };
 module_i2c_driver(rt5660_i2c_driver);

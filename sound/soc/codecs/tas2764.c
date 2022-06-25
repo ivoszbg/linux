@@ -457,7 +457,7 @@ static int tas2764_set_dai_tdm_slot(struct snd_soc_dai *dai,
 	return 0;
 }
 
-static struct snd_soc_dai_ops tas2764_dai_ops = {
+static const struct snd_soc_dai_ops tas2764_dai_ops = {
 	.mute_stream = tas2764_mute,
 	.hw_params  = tas2764_hw_params,
 	.set_fmt    = tas2764_set_fmt,
@@ -621,8 +621,7 @@ static int tas2764_parse_dt(struct device *dev, struct tas2764_priv *tas2764)
 	return 0;
 }
 
-static int tas2764_i2c_probe(struct i2c_client *client,
-			const struct i2c_device_id *id)
+static int tas2764_i2c_probe(struct i2c_client *client)
 {
 	struct tas2764_priv *tas2764;
 	int result;
@@ -678,7 +677,7 @@ static struct i2c_driver tas2764_i2c_driver = {
 		.name   = "tas2764",
 		.of_match_table = of_match_ptr(tas2764_of_match),
 	},
-	.probe      = tas2764_i2c_probe,
+	.probe_new  = tas2764_i2c_probe,
 	.id_table   = tas2764_i2c_id,
 };
 module_i2c_driver(tas2764_i2c_driver);

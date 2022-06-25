@@ -123,7 +123,7 @@ struct wilc_remain_ch {
 	u32 duration;
 	void (*expired)(void *priv, u64 cookie);
 	void *arg;
-	u32 cookie;
+	u64 cookie;
 };
 
 struct wilc;
@@ -207,6 +207,7 @@ int wilc_get_statistics(struct wilc_vif *vif, struct rf_info *stats);
 int wilc_get_vif_idx(struct wilc_vif *vif);
 int wilc_set_tx_power(struct wilc_vif *vif, u8 tx_power);
 int wilc_get_tx_power(struct wilc_vif *vif, u8 *tx_power);
+void wilc_set_wowlan_trigger(struct wilc_vif *vif, bool enabled);
 void wilc_scan_complete_received(struct wilc *wilc, u8 *buffer, u32 length);
 void wilc_network_info_received(struct wilc *wilc, u8 *buffer, u32 length);
 void wilc_gnrl_async_info_received(struct wilc *wilc, u8 *buffer, u32 length);

@@ -40,7 +40,7 @@ enum bpf_enum_value_kind {
 #define __CORE_RELO(src, field, info)					      \
 	__builtin_preserve_field_info((src)->field, BPF_FIELD_##info)
 
-#if __BYTE_ORDER == __LITTLE_ENDIAN
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
 #define __CORE_BITFIELD_PROBE_READ(dst, src, fld)			      \
 	bpf_probe_read_kernel(						      \
 			(void *)dst,				      \
@@ -88,11 +88,19 @@ enum bpf_enum_value_kind {
 	const void *p = (const void *)s + __CORE_RELO(s, field, BYTE_OFFSET); \
 	unsigned long long val;						      \
 									      \
+	/* This is a so-called barrier_var() operation that makes specified   \
+	 * variable "a black box" for optimizing compiler.		      \
+	 * It forces compiler to perform BYTE_OFFSET relocation on p and use  \
+	 * its calculated value in the switch below, instead of applying      \
+	 * the same relocation 4 times for each individual memory load.       \
+	 */								      \
+	asm volatile("" : "=r"(p) : "0"(p));				      \
+									      \
 	switch (__CORE_RELO(s, field, BYTE_SIZE)) {			      \
-	case 1: val = *(const unsigned char *)p;			      \
-	case 2: val = *(const unsigned short *)p;			      \
-	case 4: val = *(const unsigned int *)p;				      \
-	case 8: val = *(const unsigned long long *)p;			      \
+	case 1: val = *(const unsigned char *)p; break;			      \
+	case 2: val = *(const unsigned short *)p; break;		      \
+	case 4: val = *(const unsigned int *)p; break;			      \
+	case 8: val = *(const unsigned long long *)p; break;		      \
 	}								      \
 	val <<= __CORE_RELO(s, field, LSHIFT_U64);			      \
 	if (__CORE_RELO(s, field, SIGNED))				      \
@@ -102,21 +110,50 @@ enum bpf_enum_value_kind {
 	val;								      \
 })
 
+#define ___bpf_field_ref1(field)	(field)
+#define ___bpf_field_ref2(type, field)	(((typeof(type) *)0)->field)
+#define ___bpf_field_ref(args...)					    \
+	___bpf_apply(___bpf_field_ref, ___bpf_narg(args))(args)
+
 /*
  * Convenience macro to check that field actually exists in target kernel's.
  * Returns:
  *    1, if matching field is present in target kernel;
  *    0, if no matching field found.
+ *
+ * Supports two forms:
+ *   - field reference through variable access:
+ *     bpf_core_field_exists(p->my_field);
+ *   - field reference through type and field names:
+ *     bpf_core_field_exists(struct my_type, my_field).
  */
-#define bpf_core_field_exists(field)					    \
-	__builtin_preserve_field_info(field, BPF_FIELD_EXISTS)
+#define bpf_core_field_exists(field...)					    \
+	__builtin_preserve_field_info(___bpf_field_ref(field), BPF_FIELD_EXISTS)
 
 /*
  * Convenience macro to get the byte size of a field. Works for integers,
  * struct/unions, pointers, arrays, and enums.
+ *
+ * Supports two forms:
+ *   - field reference through variable access:
+ *     bpf_core_field_size(p->my_field);
+ *   - field reference through type and field names:
+ *     bpf_core_field_size(struct my_type, my_field).
  */
-#define bpf_core_field_size(field)					    \
-	__builtin_preserve_field_info(field, BPF_FIELD_BYTE_SIZE)
+#define bpf_core_field_size(field...)					    \
+	__builtin_preserve_field_info(___bpf_field_ref(field), BPF_FIELD_BYTE_SIZE)
+
+/*
+ * Convenience macro to get field's byte offset.
+ *
+ * Supports two forms:
+ *   - field reference through variable access:
+ *     bpf_core_field_offset(p->my_field);
+ *   - field reference through type and field names:
+ *     bpf_core_field_offset(struct my_type, my_field).
+ */
+#define bpf_core_field_offset(field...)					    \
+	__builtin_preserve_field_info(___bpf_field_ref(field), BPF_FIELD_BYTE_OFFSET)
 
 /*
  * Convenience macro to get BTF type ID of a specified type, using a local BTF

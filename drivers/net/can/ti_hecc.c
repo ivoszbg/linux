@@ -34,7 +34,6 @@
 
 #include <linux/can/dev.h>
 #include <linux/can/error.h>
-#include <linux/can/led.h>
 #include <linux/can/rx-offload.h>
 
 #define DRV_NAME "ti_hecc"
@@ -633,7 +632,7 @@ static int ti_hecc_error(struct net_device *ndev, int int_status,
 			cf->data[3] = CAN_ERR_PROT_LOC_ACK;
 
 		timestamp = hecc_read(priv, HECC_CANLNT);
-		err = can_rx_offload_queue_sorted(&priv->offload, skb,
+		err = can_rx_offload_queue_timestamp(&priv->offload, skb,
 						  timestamp);
 		if (err)
 			ndev->stats.rx_fifo_errors++;
@@ -668,7 +667,7 @@ static void ti_hecc_change_state(struct net_device *ndev,
 	}
 
 	timestamp = hecc_read(priv, HECC_CANLNT);
-	err = can_rx_offload_queue_sorted(&priv->offload, skb, timestamp);
+	err = can_rx_offload_queue_timestamp(&priv->offload, skb, timestamp);
 	if (err)
 		ndev->stats.rx_fifo_errors++;
 }
@@ -759,7 +758,6 @@ static irqreturn_t ti_hecc_interrupt(int irq, void *dev_id)
 				can_rx_offload_get_echo_skb(&priv->offload,
 							    mbxno, stamp, NULL);
 			stats->tx_packets++;
-			can_led_event(ndev, CAN_LED_EVENT_TX);
 			--priv->tx_tail;
 		}
 
@@ -785,6 +783,8 @@ static irqreturn_t ti_hecc_interrupt(int irq, void *dev_id)
 		hecc_write(priv, HECC_CANGIF0, handled);
 		int_status = hecc_read(priv, HECC_CANGIF0);
 	}
+
+	can_rx_offload_irq_finish(&priv->offload);
 
 	return IRQ_HANDLED;
 }
@@ -812,8 +812,6 @@ static int ti_hecc_open(struct net_device *ndev)
 		return err;
 	}
 
-	can_led_event(ndev, CAN_LED_EVENT_OPEN);
-
 	ti_hecc_start(ndev);
 	can_rx_offload_enable(&priv->offload);
 	netif_start_queue(ndev);
@@ -831,8 +829,6 @@ static int ti_hecc_close(struct net_device *ndev)
 	free_irq(ndev->irq, ndev);
 	close_candev(ndev);
 	ti_hecc_transceiver_switch(priv, 0);
-
-	can_led_event(ndev, CAN_LED_EVENT_STOP);
 
 	return 0;
 }
@@ -857,7 +853,6 @@ static int ti_hecc_probe(struct platform_device *pdev)
 	struct net_device *ndev = (struct net_device *)0;
 	struct ti_hecc_priv *priv;
 	struct device_node *np = pdev->dev.of_node;
-	struct resource *irq;
 	struct regulator *reg_xceiver;
 	int err = -ENODEV;
 
@@ -902,9 +897,9 @@ static int ti_hecc_probe(struct platform_device *pdev)
 		goto probe_exit_candev;
 	}
 
-	irq = platform_get_resource(pdev, IORESOURCE_IRQ, 0);
-	if (!irq) {
-		dev_err(&pdev->dev, "No irq resource\n");
+	ndev->irq = platform_get_irq(pdev, 0);
+	if (ndev->irq < 0) {
+		err = ndev->irq;
 		goto probe_exit_candev;
 	}
 
@@ -918,7 +913,6 @@ static int ti_hecc_probe(struct platform_device *pdev)
 	priv->can.ctrlmode_supported = CAN_CTRLMODE_3_SAMPLES;
 
 	spin_lock_init(&priv->mbx_lock);
-	ndev->irq = irq->start;
 	ndev->flags |= IFF_ECHO;
 	platform_set_drvdata(pdev, ndev);
 	SET_NETDEV_DEV(ndev, &pdev->dev);
@@ -953,8 +947,6 @@ static int ti_hecc_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "register_candev() failed\n");
 		goto probe_exit_offload;
 	}
-
-	devm_can_led_init(ndev);
 
 	dev_info(&pdev->dev, "device registered (reg_base=%p, irq=%u)\n",
 		 priv->base, (u32)ndev->irq);

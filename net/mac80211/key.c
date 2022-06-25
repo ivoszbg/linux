@@ -476,7 +476,7 @@ static int ieee80211_key_replace(struct ieee80211_sub_if_data *sdata,
 			    !(new->conf.flags & IEEE80211_KEY_FLAG_NO_AUTO_TX))
 				_ieee80211_set_tx_key(new, true);
 		} else {
-			rcu_assign_pointer(sta->gtk[idx], new);
+			rcu_assign_pointer(sta->deflink.gtk[idx], new);
 		}
 		/* Only needed for transition from no key -> key.
 		 * Still triggers unnecessary when using Extended Key ID
@@ -799,6 +799,7 @@ int ieee80211_key_link(struct ieee80211_key *key,
 		       struct ieee80211_sub_if_data *sdata,
 		       struct sta_info *sta)
 {
+	static atomic_t key_color = ATOMIC_INIT(0);
 	struct ieee80211_key *old_key;
 	int idx = key->conf.keyidx;
 	bool pairwise = key->conf.flags & IEEE80211_KEY_FLAG_PAIRWISE;
@@ -825,7 +826,8 @@ int ieee80211_key_link(struct ieee80211_key *key,
 		    (old_key && old_key->conf.cipher != key->conf.cipher))
 			goto out;
 	} else if (sta) {
-		old_key = key_mtx_dereference(sdata->local, sta->gtk[idx]);
+		old_key = key_mtx_dereference(sdata->local,
+					      sta->deflink.gtk[idx]);
 	} else {
 		old_key = key_mtx_dereference(sdata->local, sdata->keys[idx]);
 	}
@@ -849,6 +851,12 @@ int ieee80211_key_link(struct ieee80211_key *key,
 	key->local = sdata->local;
 	key->sdata = sdata;
 	key->sta = sta;
+
+	/*
+	 * Assign a unique ID to every key so we can easily prevent mixed
+	 * key and fragment cache attacks.
+	 */
+	key->color = atomic_inc_return(&key_color);
 
 	increment_tailroom_need_count(sdata);
 
@@ -1069,8 +1077,8 @@ void ieee80211_free_sta_keys(struct ieee80211_local *local,
 	int i;
 
 	mutex_lock(&local->key_mtx);
-	for (i = 0; i < ARRAY_SIZE(sta->gtk); i++) {
-		key = key_mtx_dereference(local, sta->gtk[i]);
+	for (i = 0; i < ARRAY_SIZE(sta->deflink.gtk); i++) {
+		key = key_mtx_dereference(local, sta->deflink.gtk[i]);
 		if (!key)
 			continue;
 		ieee80211_key_replace(key->sdata, key->sta,

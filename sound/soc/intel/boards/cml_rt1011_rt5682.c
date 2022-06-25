@@ -141,7 +141,7 @@ static int cml_rt5682_codec_init(struct snd_soc_pcm_runtime *rtd)
 				    SND_JACK_HEADSET | SND_JACK_BTN_0 |
 				    SND_JACK_BTN_1 | SND_JACK_BTN_2 |
 				    SND_JACK_BTN_3,
-				    &ctx->headset, NULL, 0);
+				    &ctx->headset);
 	if (ret) {
 		dev_err(rtd->dev, "Headset Jack creation failed: %d\n", ret);
 		return ret;
@@ -338,8 +338,7 @@ static int sof_card_late_probe(struct snd_soc_card *card)
 		snprintf(jack_name, sizeof(jack_name),
 			 "HDMI/DP, pcm=%d Jack", pcm->device);
 		ret = snd_soc_card_jack_new(card, jack_name,
-					    SND_JACK_AVOUT, &hdmi_jack[i],
-					    NULL, 0);
+					    SND_JACK_AVOUT, &hdmi_jack[i]);
 		if (ret)
 			return ret;
 
@@ -594,3 +593,4 @@ MODULE_AUTHOR("Shuming Fan <shumingf@realtek.com>");
 MODULE_AUTHOR("Mac Chiang <mac.chiang@intel.com>");
 MODULE_LICENSE("GPL v2");
 MODULE_ALIAS("platform:cml_rt1011_rt5682");
+MODULE_IMPORT_NS(SND_SOC_INTEL_HDA_DSP_COMMON);

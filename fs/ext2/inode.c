@@ -799,7 +799,6 @@ int ext2_get_block(struct inode *inode, sector_t iblock,
 
 }
 
-#ifdef CONFIG_FS_DAX
 static int ext2_iomap_begin(struct inode *inode, loff_t offset, loff_t length,
 		unsigned flags, struct iomap *iomap, struct iomap *srcmap)
 {
@@ -817,9 +816,11 @@ static int ext2_iomap_begin(struct inode *inode, loff_t offset, loff_t length,
 		return ret;
 
 	iomap->flags = 0;
-	iomap->bdev = inode->i_sb->s_bdev;
 	iomap->offset = (u64)first_block << blkbits;
-	iomap->dax_dev = sbi->s_daxdev;
+	if (flags & IOMAP_DAX)
+		iomap->dax_dev = sbi->s_daxdev;
+	else
+		iomap->bdev = inode->i_sb->s_bdev;
 
 	if (ret == 0) {
 		iomap->type = IOMAP_HOLE;
@@ -828,6 +829,8 @@ static int ext2_iomap_begin(struct inode *inode, loff_t offset, loff_t length,
 	} else {
 		iomap->type = IOMAP_MAPPED;
 		iomap->addr = (u64)bno << blkbits;
+		if (flags & IOMAP_DAX)
+			iomap->addr += sbi->s_dax_part_off;
 		iomap->length = (u64)ret << blkbits;
 		iomap->flags |= IOMAP_F_MERGED;
 	}
@@ -852,16 +855,18 @@ const struct iomap_ops ext2_iomap_ops = {
 	.iomap_begin		= ext2_iomap_begin,
 	.iomap_end		= ext2_iomap_end,
 };
-#else
-/* Define empty ops for !CONFIG_FS_DAX case to avoid ugly ifdefs */
-const struct iomap_ops ext2_iomap_ops;
-#endif /* CONFIG_FS_DAX */
 
 int ext2_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
 		u64 start, u64 len)
 {
-	return generic_block_fiemap(inode, fieinfo, start, len,
-				    ext2_get_block);
+	int ret;
+
+	inode_lock(inode);
+	len = min_t(u64, len, i_size_read(inode));
+	ret = iomap_fiemap(inode, fieinfo, start, len, &ext2_iomap_ops);
+	inode_unlock(inode);
+
+	return ret;
 }
 
 static int ext2_writepage(struct page *page, struct writeback_control *wbc)
@@ -869,9 +874,9 @@ static int ext2_writepage(struct page *page, struct writeback_control *wbc)
 	return block_write_full_page(page, ext2_get_block, wbc);
 }
 
-static int ext2_readpage(struct file *file, struct page *page)
+static int ext2_read_folio(struct file *file, struct folio *folio)
 {
-	return mpage_readpage(page, ext2_get_block);
+	return mpage_read_folio(folio, ext2_get_block);
 }
 
 static void ext2_readahead(struct readahead_control *rac)
@@ -881,13 +886,11 @@ static void ext2_readahead(struct readahead_control *rac)
 
 static int
 ext2_write_begin(struct file *file, struct address_space *mapping,
-		loff_t pos, unsigned len, unsigned flags,
-		struct page **pagep, void **fsdata)
+		loff_t pos, unsigned len, struct page **pagep, void **fsdata)
 {
 	int ret;
 
-	ret = block_write_begin(mapping, pos, len, flags, pagep,
-				ext2_get_block);
+	ret = block_write_begin(mapping, pos, len, pagep, ext2_get_block);
 	if (ret < 0)
 		ext2_write_failed(mapping, pos + len);
 	return ret;
@@ -907,12 +910,11 @@ static int ext2_write_end(struct file *file, struct address_space *mapping,
 
 static int
 ext2_nobh_write_begin(struct file *file, struct address_space *mapping,
-		loff_t pos, unsigned len, unsigned flags,
-		struct page **pagep, void **fsdata)
+		loff_t pos, unsigned len, struct page **pagep, void **fsdata)
 {
 	int ret;
 
-	ret = nobh_write_begin(mapping, pos, len, flags, pagep, fsdata,
+	ret = nobh_write_begin(mapping, pos, len, pagep, fsdata,
 			       ext2_get_block);
 	if (ret < 0)
 		ext2_write_failed(mapping, pos + len);
@@ -961,7 +963,9 @@ ext2_dax_writepages(struct address_space *mapping, struct writeback_control *wbc
 }
 
 const struct address_space_operations ext2_aops = {
-	.readpage		= ext2_readpage,
+	.dirty_folio		= block_dirty_folio,
+	.invalidate_folio	= block_invalidate_folio,
+	.read_folio		= ext2_read_folio,
 	.readahead		= ext2_readahead,
 	.writepage		= ext2_writepage,
 	.write_begin		= ext2_write_begin,
@@ -975,7 +979,9 @@ const struct address_space_operations ext2_aops = {
 };
 
 const struct address_space_operations ext2_nobh_aops = {
-	.readpage		= ext2_readpage,
+	.dirty_folio		= block_dirty_folio,
+	.invalidate_folio	= block_invalidate_folio,
+	.read_folio		= ext2_read_folio,
 	.readahead		= ext2_readahead,
 	.writepage		= ext2_nobh_writepage,
 	.write_begin		= ext2_nobh_write_begin,
@@ -990,8 +996,7 @@ const struct address_space_operations ext2_nobh_aops = {
 static const struct address_space_operations ext2_dax_aops = {
 	.writepages		= ext2_dax_writepages,
 	.direct_IO		= noop_direct_IO,
-	.set_page_dirty		= noop_set_page_dirty,
-	.invalidatepage		= noop_invalidatepage,
+	.dirty_folio		= noop_dirty_folio,
 };
 
 /*
@@ -1175,7 +1180,7 @@ static void ext2_free_branches(struct inode *inode, __le32 *p, __le32 *q, int de
 		ext2_free_data(inode, p, q);
 }
 
-/* dax_sem must be held when calling this function */
+/* mapping->invalidate_lock must be held when calling this function */
 static void __ext2_truncate_blocks(struct inode *inode, loff_t offset)
 {
 	__le32 *i_data = EXT2_I(inode)->i_data;
@@ -1192,7 +1197,7 @@ static void __ext2_truncate_blocks(struct inode *inode, loff_t offset)
 	iblock = (offset + blocksize-1) >> EXT2_BLOCK_SIZE_BITS(inode->i_sb);
 
 #ifdef CONFIG_FS_DAX
-	WARN_ON(!rwsem_is_locked(&ei->dax_sem));
+	WARN_ON(!rwsem_is_locked(&inode->i_mapping->invalidate_lock));
 #endif
 
 	n = ext2_block_to_path(inode, iblock, offsets, NULL);
@@ -1274,9 +1279,9 @@ static void ext2_truncate_blocks(struct inode *inode, loff_t offset)
 	if (ext2_inode_is_fast_symlink(inode))
 		return;
 
-	dax_sem_down_write(EXT2_I(inode));
+	filemap_invalidate_lock(inode->i_mapping);
 	__ext2_truncate_blocks(inode, offset);
-	dax_sem_up_write(EXT2_I(inode));
+	filemap_invalidate_unlock(inode->i_mapping);
 }
 
 static int ext2_setsize(struct inode *inode, loff_t newsize)
@@ -1294,9 +1299,9 @@ static int ext2_setsize(struct inode *inode, loff_t newsize)
 	inode_dio_wait(inode);
 
 	if (IS_DAX(inode)) {
-		error = iomap_zero_range(inode, newsize,
-					 PAGE_ALIGN(newsize) - newsize, NULL,
-					 &ext2_iomap_ops);
+		error = dax_zero_range(inode, newsize,
+				       PAGE_ALIGN(newsize) - newsize, NULL,
+				       &ext2_iomap_ops);
 	} else if (test_opt(inode->i_sb, NOBH))
 		error = nobh_truncate_page(inode->i_mapping,
 				newsize, ext2_get_block);
@@ -1306,10 +1311,10 @@ static int ext2_setsize(struct inode *inode, loff_t newsize)
 	if (error)
 		return error;
 
-	dax_sem_down_write(EXT2_I(inode));
+	filemap_invalidate_lock(inode->i_mapping);
 	truncate_setsize(inode, newsize);
 	__ext2_truncate_blocks(inode, newsize);
-	dax_sem_up_write(EXT2_I(inode));
+	filemap_invalidate_unlock(inode->i_mapping);
 
 	inode->i_mtime = inode->i_ctime = current_time(inode);
 	if (inode_needs_sync(inode)) {
@@ -1544,7 +1549,7 @@ static int __ext2_write_inode(struct inode *inode, int do_sync)
 	if (IS_ERR(raw_inode))
  		return -EIO;
 
-	/* For fields not not tracking in the in-memory inode,
+	/* For fields not tracking in the in-memory inode,
 	 * initialise them to zero for new inodes. */
 	if (ei->i_state & EXT2_STATE_NEW)
 		memset(raw_inode, 0, EXT2_SB(sb)->s_inode_size);

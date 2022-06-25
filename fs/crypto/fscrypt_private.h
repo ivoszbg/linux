@@ -20,6 +20,11 @@
 
 #define FSCRYPT_FILE_NONCE_SIZE	16
 
+/*
+ * Minimum size of an fscrypt master key.  Note: a longer key will be required
+ * if ciphers with a 256-bit security strength are used.  This is just the
+ * absolute minimum, which applies when only 128-bit encryption is used.
+ */
 #define FSCRYPT_MIN_KEY_SIZE	16
 
 #define FSCRYPT_CONTEXT_V1	1
@@ -413,7 +418,11 @@ struct fscrypt_master_key_secret {
 	 */
 	struct fscrypt_hkdf	hkdf;
 
-	/* Size of the raw key in bytes.  Set even if ->raw isn't set. */
+	/*
+	 * Size of the raw key in bytes.  This remains set even if ->raw was
+	 * zeroized due to no longer being needed.  I.e. we still remember the
+	 * size of the key even if we don't need to remember the key itself.
+	 */
 	u32			size;
 
 	/* For v1 policy keys: the raw key.  Wiped for v2 policy keys. */
@@ -536,8 +545,8 @@ struct key *
 fscrypt_find_master_key(struct super_block *sb,
 			const struct fscrypt_key_specifier *mk_spec);
 
-int fscrypt_add_test_dummy_key(struct super_block *sb,
-			       struct fscrypt_key_specifier *key_spec);
+int fscrypt_get_test_dummy_key_identifier(
+			  u8 key_identifier[FSCRYPT_KEY_IDENTIFIER_SIZE]);
 
 int fscrypt_verify_key_added(struct super_block *sb,
 			     const u8 identifier[FSCRYPT_KEY_IDENTIFIER_SIZE]);
@@ -549,9 +558,12 @@ int __init fscrypt_init_keyring(void);
 struct fscrypt_mode {
 	const char *friendly_name;
 	const char *cipher_str;
-	int keysize;
-	int ivsize;
-	int logged_impl_name;
+	int keysize;		/* key size in bytes */
+	int security_strength;	/* security strength in bytes */
+	int ivsize;		/* IV size in bytes */
+	int logged_cryptoapi_impl;
+	int logged_blk_crypto_native;
+	int logged_blk_crypto_fallback;
 	enum blk_crypto_mode_num blk_crypto_mode;
 };
 
@@ -611,6 +623,8 @@ int fscrypt_setup_v1_file_key_via_subscribed_keyrings(struct fscrypt_info *ci);
 
 bool fscrypt_policies_equal(const union fscrypt_policy *policy1,
 			    const union fscrypt_policy *policy2);
+int fscrypt_policy_to_key_spec(const union fscrypt_policy *policy,
+			       struct fscrypt_key_specifier *key_spec);
 bool fscrypt_supported_policy(const union fscrypt_policy *policy_u,
 			      const struct inode *inode);
 int fscrypt_policy_from_context(union fscrypt_policy *policy_u,

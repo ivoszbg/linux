@@ -1037,7 +1037,7 @@ void rt2800_txdone_entry(struct queue_entry *entry, u32 status, __le32 *txwi,
 	 * FIXME: if we do not find matching entry, we tell that frame was
 	 * posted without any retries. We need to find a way to fix that
 	 * and provide retry count.
- 	 */
+	 */
 	if (unlikely((aggr == 1 && ampdu == 0 && real_mcs != mcs)) || !match) {
 		rt2800_rate_from_status(skbdesc, status, rt2x00dev->curr_band);
 		mcs = real_mcs;
@@ -1801,8 +1801,8 @@ int rt2800_sta_add(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 	 * do not have a choice if some connected STA is not capable to
 	 * receive the same amount of data like the others.
 	 */
-	if (sta->ht_cap.ht_supported) {
-		drv_data->ampdu_factor_cnt[sta->ht_cap.ampdu_factor & 3]++;
+	if (sta->deflink.ht_cap.ht_supported) {
+		drv_data->ampdu_factor_cnt[sta->deflink.ht_cap.ampdu_factor & 3]++;
 		rt2800_set_max_psdu_len(rt2x00dev);
 	}
 
@@ -1847,8 +1847,8 @@ int rt2800_sta_remove(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 	struct rt2x00_sta *sta_priv = sta_to_rt2x00_sta(sta);
 	int wcid = sta_priv->wcid;
 
-	if (sta->ht_cap.ht_supported) {
-		drv_data->ampdu_factor_cnt[sta->ht_cap.ampdu_factor & 3]--;
+	if (sta->deflink.ht_cap.ht_supported) {
+		drv_data->ampdu_factor_cnt[sta->deflink.ht_cap.ampdu_factor & 3]--;
 		rt2800_set_max_psdu_len(rt2x00dev);
 	}
 

@@ -118,6 +118,7 @@ static void rx_csum(struct hinic_rxq *rxq, u32 status,
 		skb->ip_summed = CHECKSUM_NONE;
 	}
 }
+
 /**
  * rx_alloc_skb - allocate skb and map it to dma address
  * @rxq: rx queue
@@ -137,10 +138,8 @@ static struct sk_buff *rx_alloc_skb(struct hinic_rxq *rxq,
 	int err;
 
 	skb = netdev_alloc_skb_ip_align(rxq->netdev, rxq->rq->buf_sz);
-	if (!skb) {
-		netdev_err(rxq->netdev, "Failed to allocate Rx SKB\n");
+	if (!skb)
 		return NULL;
-	}
 
 	addr = dma_map_single(&pdev->dev, skb->data, rxq->rq->buf_sz,
 			      DMA_FROM_DEVICE);
@@ -212,10 +211,8 @@ static int rx_alloc_pkts(struct hinic_rxq *rxq)
 
 	for (i = 0; i < free_wqebbs; i++) {
 		skb = rx_alloc_skb(rxq, &dma_addr);
-		if (!skb) {
-			netdev_err(rxq->netdev, "Failed to alloc Rx skb\n");
+		if (!skb)
 			goto skb_out;
-		}
 
 		hinic_set_sge(&sge, dma_addr, skb->len);
 
@@ -484,7 +481,8 @@ static void rx_add_napi(struct hinic_rxq *rxq)
 {
 	struct hinic_dev *nic_dev = netdev_priv(rxq->netdev);
 
-	netif_napi_add(rxq->netdev, &rxq->napi, rx_poll, nic_dev->rx_weight);
+	netif_napi_add_weight(rxq->netdev, &rxq->napi, rx_poll,
+			      nic_dev->rx_weight);
 	napi_enable(&rxq->napi);
 }
 
@@ -551,7 +549,7 @@ static int rx_request_irq(struct hinic_rxq *rxq)
 		goto err_req_irq;
 
 	cpumask_set_cpu(qp->q_id % num_online_cpus(), &rq->affinity_mask);
-	err = irq_set_affinity_hint(rq->irq, &rq->affinity_mask);
+	err = irq_set_affinity_and_hint(rq->irq, &rq->affinity_mask);
 	if (err)
 		goto err_irq_affinity;
 
@@ -568,7 +566,7 @@ static void rx_free_irq(struct hinic_rxq *rxq)
 {
 	struct hinic_rq *rq = rxq->rq;
 
-	irq_set_affinity_hint(rq->irq, NULL);
+	irq_update_affinity_hint(rq->irq, NULL);
 	free_irq(rq->irq, rxq);
 	rx_del_napi(rxq);
 }

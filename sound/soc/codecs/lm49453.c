@@ -1146,17 +1146,17 @@ static int lm49453_set_dai_fmt(struct snd_soc_dai *codec_dai, unsigned int fmt)
 	int clk_phase = 0;
 	int clk_shift = 0;
 
-	switch (fmt & SND_SOC_DAIFMT_MASTER_MASK) {
-	case SND_SOC_DAIFMT_CBS_CFS:
+	switch (fmt & SND_SOC_DAIFMT_CLOCK_PROVIDER_MASK) {
+	case SND_SOC_DAIFMT_CBC_CFC:
 		aif_val = 0;
 		break;
-	case SND_SOC_DAIFMT_CBS_CFM:
+	case SND_SOC_DAIFMT_CBC_CFP:
 		aif_val = LM49453_AUDIO_PORT1_BASIC_SYNC_MS;
 		break;
-	case SND_SOC_DAIFMT_CBM_CFS:
+	case SND_SOC_DAIFMT_CBP_CFC:
 		aif_val = LM49453_AUDIO_PORT1_BASIC_CLK_MS;
 		break;
-	case SND_SOC_DAIFMT_CBM_CFM:
+	case SND_SOC_DAIFMT_CBP_CFP:
 		aif_val = LM49453_AUDIO_PORT1_BASIC_CLK_MS |
 			  LM49453_AUDIO_PORT1_BASIC_SYNC_MS;
 		break;
@@ -1206,8 +1206,6 @@ static int lm49453_set_dai_sysclk(struct snd_soc_dai *dai, int clk_id,
 		break;
 	case 48000:
 	case 32576:
-		/* fll clk slection */
-		pll_clk = BIT(4);
 		return 0;
 	default:
 		return -EINVAL;
@@ -1414,8 +1412,7 @@ static const struct regmap_config lm49453_regmap_config = {
 	.cache_type = REGCACHE_RBTREE,
 };
 
-static int lm49453_i2c_probe(struct i2c_client *i2c,
-			     const struct i2c_device_id *id)
+static int lm49453_i2c_probe(struct i2c_client *i2c)
 {
 	struct lm49453_priv *lm49453;
 	int ret = 0;
@@ -1460,7 +1457,7 @@ static struct i2c_driver lm49453_i2c_driver = {
 	.driver = {
 		.name = "lm49453",
 	},
-	.probe = lm49453_i2c_probe,
+	.probe_new = lm49453_i2c_probe,
 	.remove = lm49453_i2c_remove,
 	.id_table = lm49453_i2c_id,
 };

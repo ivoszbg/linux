@@ -3,11 +3,6 @@
  *
  * Copyright(c) 2003 - 2014 Intel Corporation. All rights reserved.
  * Copyright(c) 2015 Intel Deutschland GmbH
- *
- * Contact Information:
- * Intel Linux Wireless <linuxwifi@intel.com>
- * Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
- *
  *****************************************************************************/
 
 #include <linux/etherdevice.h>
@@ -1285,7 +1280,7 @@ static void iwlagn_check_needed_chains(struct iwl_priv *priv,
 			break;
 		}
 
-		ht_cap = &sta->ht_cap;
+		ht_cap = &sta->deflink.ht_cap;
 
 		need_multiple = true;
 

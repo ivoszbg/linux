@@ -114,6 +114,31 @@ unsigned long dev_pm_opp_get_voltage(struct dev_pm_opp *opp)
 EXPORT_SYMBOL_GPL(dev_pm_opp_get_voltage);
 
 /**
+ * dev_pm_opp_get_power() - Gets the power corresponding to an opp
+ * @opp:	opp for which power has to be returned for
+ *
+ * Return: power in micro watt corresponding to the opp, else
+ * return 0
+ *
+ * This is useful only for devices with single power supply.
+ */
+unsigned long dev_pm_opp_get_power(struct dev_pm_opp *opp)
+{
+	unsigned long opp_power = 0;
+	int i;
+
+	if (IS_ERR_OR_NULL(opp)) {
+		pr_err("%s: Invalid parameters\n", __func__);
+		return 0;
+	}
+	for (i = 0; i < opp->opp_table->regulator_count; i++)
+		opp_power += opp->supplies[i].u_watt;
+
+	return opp_power;
+}
+EXPORT_SYMBOL_GPL(dev_pm_opp_get_power);
+
+/**
  * dev_pm_opp_get_freq() - Gets the frequency corresponding to an available opp
  * @opp:	opp for which frequency has to be returned for
  *
@@ -431,103 +456,6 @@ struct dev_pm_opp *dev_pm_opp_find_freq_exact(struct device *dev,
 }
 EXPORT_SYMBOL_GPL(dev_pm_opp_find_freq_exact);
 
-/**
- * dev_pm_opp_find_level_exact() - search for an exact level
- * @dev:		device for which we do this operation
- * @level:		level to search for
- *
- * Return: Searches for exact match in the opp table and returns pointer to the
- * matching opp if found, else returns ERR_PTR in case of error and should
- * be handled using IS_ERR. Error return values can be:
- * EINVAL:	for bad pointer
- * ERANGE:	no match found for search
- * ENODEV:	if device not found in list of registered devices
- *
- * The callers are required to call dev_pm_opp_put() for the returned OPP after
- * use.
- */
-struct dev_pm_opp *dev_pm_opp_find_level_exact(struct device *dev,
-					       unsigned int level)
-{
-	struct opp_table *opp_table;
-	struct dev_pm_opp *temp_opp, *opp = ERR_PTR(-ERANGE);
-
-	opp_table = _find_opp_table(dev);
-	if (IS_ERR(opp_table)) {
-		int r = PTR_ERR(opp_table);
-
-		dev_err(dev, "%s: OPP table not found (%d)\n", __func__, r);
-		return ERR_PTR(r);
-	}
-
-	mutex_lock(&opp_table->lock);
-
-	list_for_each_entry(temp_opp, &opp_table->opp_list, node) {
-		if (temp_opp->level == level) {
-			opp = temp_opp;
-
-			/* Increment the reference count of OPP */
-			dev_pm_opp_get(opp);
-			break;
-		}
-	}
-
-	mutex_unlock(&opp_table->lock);
-	dev_pm_opp_put_opp_table(opp_table);
-
-	return opp;
-}
-EXPORT_SYMBOL_GPL(dev_pm_opp_find_level_exact);
-
-/**
- * dev_pm_opp_find_level_ceil() - search for an rounded up level
- * @dev:		device for which we do this operation
- * @level:		level to search for
- *
- * Return: Searches for rounded up match in the opp table and returns pointer
- * to the  matching opp if found, else returns ERR_PTR in case of error and
- * should be handled using IS_ERR. Error return values can be:
- * EINVAL:	for bad pointer
- * ERANGE:	no match found for search
- * ENODEV:	if device not found in list of registered devices
- *
- * The callers are required to call dev_pm_opp_put() for the returned OPP after
- * use.
- */
-struct dev_pm_opp *dev_pm_opp_find_level_ceil(struct device *dev,
-					      unsigned int *level)
-{
-	struct opp_table *opp_table;
-	struct dev_pm_opp *temp_opp, *opp = ERR_PTR(-ERANGE);
-
-	opp_table = _find_opp_table(dev);
-	if (IS_ERR(opp_table)) {
-		int r = PTR_ERR(opp_table);
-
-		dev_err(dev, "%s: OPP table not found (%d)\n", __func__, r);
-		return ERR_PTR(r);
-	}
-
-	mutex_lock(&opp_table->lock);
-
-	list_for_each_entry(temp_opp, &opp_table->opp_list, node) {
-		if (temp_opp->available && temp_opp->level >= *level) {
-			opp = temp_opp;
-			*level = opp->level;
-
-			/* Increment the reference count of OPP */
-			dev_pm_opp_get(opp);
-			break;
-		}
-	}
-
-	mutex_unlock(&opp_table->lock);
-	dev_pm_opp_put_opp_table(opp_table);
-
-	return opp;
-}
-EXPORT_SYMBOL_GPL(dev_pm_opp_find_level_ceil);
-
 static noinline struct dev_pm_opp *_find_freq_ceil(struct opp_table *opp_table,
 						   unsigned long *freq)
 {
@@ -703,6 +631,223 @@ struct dev_pm_opp *dev_pm_opp_find_freq_ceil_by_volt(struct device *dev,
 	return opp;
 }
 EXPORT_SYMBOL_GPL(dev_pm_opp_find_freq_ceil_by_volt);
+
+/**
+ * dev_pm_opp_find_level_exact() - search for an exact level
+ * @dev:		device for which we do this operation
+ * @level:		level to search for
+ *
+ * Return: Searches for exact match in the opp table and returns pointer to the
+ * matching opp if found, else returns ERR_PTR in case of error and should
+ * be handled using IS_ERR. Error return values can be:
+ * EINVAL:	for bad pointer
+ * ERANGE:	no match found for search
+ * ENODEV:	if device not found in list of registered devices
+ *
+ * The callers are required to call dev_pm_opp_put() for the returned OPP after
+ * use.
+ */
+struct dev_pm_opp *dev_pm_opp_find_level_exact(struct device *dev,
+					       unsigned int level)
+{
+	struct opp_table *opp_table;
+	struct dev_pm_opp *temp_opp, *opp = ERR_PTR(-ERANGE);
+
+	opp_table = _find_opp_table(dev);
+	if (IS_ERR(opp_table)) {
+		int r = PTR_ERR(opp_table);
+
+		dev_err(dev, "%s: OPP table not found (%d)\n", __func__, r);
+		return ERR_PTR(r);
+	}
+
+	mutex_lock(&opp_table->lock);
+
+	list_for_each_entry(temp_opp, &opp_table->opp_list, node) {
+		if (temp_opp->level == level) {
+			opp = temp_opp;
+
+			/* Increment the reference count of OPP */
+			dev_pm_opp_get(opp);
+			break;
+		}
+	}
+
+	mutex_unlock(&opp_table->lock);
+	dev_pm_opp_put_opp_table(opp_table);
+
+	return opp;
+}
+EXPORT_SYMBOL_GPL(dev_pm_opp_find_level_exact);
+
+/**
+ * dev_pm_opp_find_level_ceil() - search for an rounded up level
+ * @dev:		device for which we do this operation
+ * @level:		level to search for
+ *
+ * Return: Searches for rounded up match in the opp table and returns pointer
+ * to the  matching opp if found, else returns ERR_PTR in case of error and
+ * should be handled using IS_ERR. Error return values can be:
+ * EINVAL:	for bad pointer
+ * ERANGE:	no match found for search
+ * ENODEV:	if device not found in list of registered devices
+ *
+ * The callers are required to call dev_pm_opp_put() for the returned OPP after
+ * use.
+ */
+struct dev_pm_opp *dev_pm_opp_find_level_ceil(struct device *dev,
+					      unsigned int *level)
+{
+	struct opp_table *opp_table;
+	struct dev_pm_opp *temp_opp, *opp = ERR_PTR(-ERANGE);
+
+	opp_table = _find_opp_table(dev);
+	if (IS_ERR(opp_table)) {
+		int r = PTR_ERR(opp_table);
+
+		dev_err(dev, "%s: OPP table not found (%d)\n", __func__, r);
+		return ERR_PTR(r);
+	}
+
+	mutex_lock(&opp_table->lock);
+
+	list_for_each_entry(temp_opp, &opp_table->opp_list, node) {
+		if (temp_opp->available && temp_opp->level >= *level) {
+			opp = temp_opp;
+			*level = opp->level;
+
+			/* Increment the reference count of OPP */
+			dev_pm_opp_get(opp);
+			break;
+		}
+	}
+
+	mutex_unlock(&opp_table->lock);
+	dev_pm_opp_put_opp_table(opp_table);
+
+	return opp;
+}
+EXPORT_SYMBOL_GPL(dev_pm_opp_find_level_ceil);
+
+/**
+ * dev_pm_opp_find_bw_ceil() - Search for a rounded ceil bandwidth
+ * @dev:	device for which we do this operation
+ * @freq:	start bandwidth
+ * @index:	which bandwidth to compare, in case of OPPs with several values
+ *
+ * Search for the matching floor *available* OPP from a starting bandwidth
+ * for a device.
+ *
+ * Return: matching *opp and refreshes *bw accordingly, else returns
+ * ERR_PTR in case of error and should be handled using IS_ERR. Error return
+ * values can be:
+ * EINVAL:	for bad pointer
+ * ERANGE:	no match found for search
+ * ENODEV:	if device not found in list of registered devices
+ *
+ * The callers are required to call dev_pm_opp_put() for the returned OPP after
+ * use.
+ */
+struct dev_pm_opp *dev_pm_opp_find_bw_ceil(struct device *dev,
+					   unsigned int *bw, int index)
+{
+	struct opp_table *opp_table;
+	struct dev_pm_opp *temp_opp, *opp = ERR_PTR(-ERANGE);
+
+	if (!dev || !bw) {
+		dev_err(dev, "%s: Invalid argument bw=%p\n", __func__, bw);
+		return ERR_PTR(-EINVAL);
+	}
+
+	opp_table = _find_opp_table(dev);
+	if (IS_ERR(opp_table))
+		return ERR_CAST(opp_table);
+
+	if (index >= opp_table->path_count)
+		return ERR_PTR(-EINVAL);
+
+	mutex_lock(&opp_table->lock);
+
+	list_for_each_entry(temp_opp, &opp_table->opp_list, node) {
+		if (temp_opp->available && temp_opp->bandwidth) {
+			if (temp_opp->bandwidth[index].peak >= *bw) {
+				opp = temp_opp;
+				*bw = opp->bandwidth[index].peak;
+
+				/* Increment the reference count of OPP */
+				dev_pm_opp_get(opp);
+				break;
+			}
+		}
+	}
+
+	mutex_unlock(&opp_table->lock);
+	dev_pm_opp_put_opp_table(opp_table);
+
+	return opp;
+}
+EXPORT_SYMBOL_GPL(dev_pm_opp_find_bw_ceil);
+
+/**
+ * dev_pm_opp_find_bw_floor() - Search for a rounded floor bandwidth
+ * @dev:	device for which we do this operation
+ * @freq:	start bandwidth
+ * @index:	which bandwidth to compare, in case of OPPs with several values
+ *
+ * Search for the matching floor *available* OPP from a starting bandwidth
+ * for a device.
+ *
+ * Return: matching *opp and refreshes *bw accordingly, else returns
+ * ERR_PTR in case of error and should be handled using IS_ERR. Error return
+ * values can be:
+ * EINVAL:	for bad pointer
+ * ERANGE:	no match found for search
+ * ENODEV:	if device not found in list of registered devices
+ *
+ * The callers are required to call dev_pm_opp_put() for the returned OPP after
+ * use.
+ */
+struct dev_pm_opp *dev_pm_opp_find_bw_floor(struct device *dev,
+					    unsigned int *bw, int index)
+{
+	struct opp_table *opp_table;
+	struct dev_pm_opp *temp_opp, *opp = ERR_PTR(-ERANGE);
+
+	if (!dev || !bw) {
+		dev_err(dev, "%s: Invalid argument bw=%p\n", __func__, bw);
+		return ERR_PTR(-EINVAL);
+	}
+
+	opp_table = _find_opp_table(dev);
+	if (IS_ERR(opp_table))
+		return ERR_CAST(opp_table);
+
+	if (index >= opp_table->path_count)
+		return ERR_PTR(-EINVAL);
+
+	mutex_lock(&opp_table->lock);
+
+	list_for_each_entry(temp_opp, &opp_table->opp_list, node) {
+		if (temp_opp->available && temp_opp->bandwidth) {
+			/* go to the next node, before choosing prev */
+			if (temp_opp->bandwidth[index].peak > *bw)
+				break;
+			opp = temp_opp;
+		}
+	}
+
+	/* Increment the reference count of OPP */
+	if (!IS_ERR(opp))
+		dev_pm_opp_get(opp);
+	mutex_unlock(&opp_table->lock);
+	dev_pm_opp_put_opp_table(opp_table);
+
+	if (!IS_ERR(opp))
+		*bw = opp->bandwidth[index].peak;
+
+	return opp;
+}
+EXPORT_SYMBOL_GPL(dev_pm_opp_find_bw_floor);
 
 static int _set_opp_voltage(struct device *dev, struct regulator *reg,
 			    struct dev_pm_opp_supply *supply)
@@ -896,6 +1041,16 @@ static int _set_required_opps(struct device *dev,
 	/* required-opps not fully initialized yet */
 	if (lazy_linking_pending(opp_table))
 		return -EBUSY;
+
+	/*
+	 * We only support genpd's OPPs in the "required-opps" for now, as we
+	 * don't know much about other use cases. Error out if the required OPP
+	 * doesn't belong to a genpd.
+	 */
+	if (unlikely(!required_opp_tables[0]->is_genpd)) {
+		dev_err(dev, "required-opps don't belong to a genpd\n");
+		return -ENOENT;
+	}
 
 	/* Single genpd case */
 	if (!genpd_virt_devs)
@@ -1451,9 +1606,8 @@ EXPORT_SYMBOL_GPL(dev_pm_opp_put);
  */
 void dev_pm_opp_remove(struct device *dev, unsigned long freq)
 {
-	struct dev_pm_opp *opp;
+	struct dev_pm_opp *opp = NULL, *iter;
 	struct opp_table *opp_table;
-	bool found = false;
 
 	opp_table = _find_opp_table(dev);
 	if (IS_ERR(opp_table))
@@ -1461,16 +1615,16 @@ void dev_pm_opp_remove(struct device *dev, unsigned long freq)
 
 	mutex_lock(&opp_table->lock);
 
-	list_for_each_entry(opp, &opp_table->opp_list, node) {
-		if (opp->rate == freq) {
-			found = true;
+	list_for_each_entry(iter, &opp_table->opp_list, node) {
+		if (iter->rate == freq) {
+			opp = iter;
 			break;
 		}
 	}
 
 	mutex_unlock(&opp_table->lock);
 
-	if (found) {
+	if (opp) {
 		dev_pm_opp_put(opp);
 
 		/* Drop the reference taken by dev_pm_opp_add() */
@@ -1846,9 +2000,6 @@ void dev_pm_opp_put_supported_hw(struct opp_table *opp_table)
 	if (unlikely(!opp_table))
 		return;
 
-	/* Make sure there are no concurrent readers while updating opp_table */
-	WARN_ON(!list_empty(&opp_table->opp_list));
-
 	kfree(opp_table->supported_hw);
 	opp_table->supported_hw = NULL;
 	opp_table->supported_hw_count = 0;
@@ -1856,6 +2007,35 @@ void dev_pm_opp_put_supported_hw(struct opp_table *opp_table)
 	dev_pm_opp_put_opp_table(opp_table);
 }
 EXPORT_SYMBOL_GPL(dev_pm_opp_put_supported_hw);
+
+static void devm_pm_opp_supported_hw_release(void *data)
+{
+	dev_pm_opp_put_supported_hw(data);
+}
+
+/**
+ * devm_pm_opp_set_supported_hw() - Set supported platforms
+ * @dev: Device for which supported-hw has to be set.
+ * @versions: Array of hierarchy of versions to match.
+ * @count: Number of elements in the array.
+ *
+ * This is a resource-managed variant of dev_pm_opp_set_supported_hw().
+ *
+ * Return: 0 on success and errorno otherwise.
+ */
+int devm_pm_opp_set_supported_hw(struct device *dev, const u32 *versions,
+				 unsigned int count)
+{
+	struct opp_table *opp_table;
+
+	opp_table = dev_pm_opp_set_supported_hw(dev, versions, count);
+	if (IS_ERR(opp_table))
+		return PTR_ERR(opp_table);
+
+	return devm_add_action_or_reset(dev, devm_pm_opp_supported_hw_release,
+					opp_table);
+}
+EXPORT_SYMBOL_GPL(devm_pm_opp_set_supported_hw);
 
 /**
  * dev_pm_opp_set_prop_name() - Set prop-extn name
@@ -1904,9 +2084,6 @@ void dev_pm_opp_put_prop_name(struct opp_table *opp_table)
 {
 	if (unlikely(!opp_table))
 		return;
-
-	/* Make sure there are no concurrent readers while updating opp_table */
-	WARN_ON(!list_empty(&opp_table->opp_list));
 
 	kfree(opp_table->prop_name);
 	opp_table->prop_name = NULL;
@@ -1961,10 +2138,9 @@ struct opp_table *dev_pm_opp_set_regulators(struct device *dev,
 	for (i = 0; i < count; i++) {
 		reg = regulator_get_optional(dev, names[i]);
 		if (IS_ERR(reg)) {
-			ret = PTR_ERR(reg);
-			if (ret != -EPROBE_DEFER)
-				dev_err(dev, "%s: no regulator (%s) found: %d\n",
-					__func__, names[i], ret);
+			ret = dev_err_probe(dev, PTR_ERR(reg),
+					    "%s: no regulator (%s) found\n",
+					    __func__, names[i]);
 			goto free_regulators;
 		}
 
@@ -2017,9 +2193,6 @@ void dev_pm_opp_put_regulators(struct opp_table *opp_table)
 	if (!opp_table->regulators)
 		goto put_opp_table;
 
-	/* Make sure there are no concurrent readers while updating opp_table */
-	WARN_ON(!list_empty(&opp_table->opp_list));
-
 	if (opp_table->enabled) {
 		for (i = opp_table->regulator_count - 1; i >= 0; i--)
 			regulator_disable(opp_table->regulators[i]);
@@ -2046,6 +2219,36 @@ put_opp_table:
 	dev_pm_opp_put_opp_table(opp_table);
 }
 EXPORT_SYMBOL_GPL(dev_pm_opp_put_regulators);
+
+static void devm_pm_opp_regulators_release(void *data)
+{
+	dev_pm_opp_put_regulators(data);
+}
+
+/**
+ * devm_pm_opp_set_regulators() - Set regulator names for the device
+ * @dev: Device for which regulator name is being set.
+ * @names: Array of pointers to the names of the regulator.
+ * @count: Number of regulators.
+ *
+ * This is a resource-managed variant of dev_pm_opp_set_regulators().
+ *
+ * Return: 0 on success and errorno otherwise.
+ */
+int devm_pm_opp_set_regulators(struct device *dev,
+			       const char * const names[],
+			       unsigned int count)
+{
+	struct opp_table *opp_table;
+
+	opp_table = dev_pm_opp_set_regulators(dev, names, count);
+	if (IS_ERR(opp_table))
+		return PTR_ERR(opp_table);
+
+	return devm_add_action_or_reset(dev, devm_pm_opp_regulators_release,
+					opp_table);
+}
+EXPORT_SYMBOL_GPL(devm_pm_opp_set_regulators);
 
 /**
  * dev_pm_opp_set_clkname() - Set clk name for the device
@@ -2083,11 +2286,8 @@ struct opp_table *dev_pm_opp_set_clkname(struct device *dev, const char *name)
 	/* Find clk for the device */
 	opp_table->clk = clk_get(dev, name);
 	if (IS_ERR(opp_table->clk)) {
-		ret = PTR_ERR(opp_table->clk);
-		if (ret != -EPROBE_DEFER) {
-			dev_err(dev, "%s: Couldn't find clock: %d\n", __func__,
-				ret);
-		}
+		ret = dev_err_probe(dev, PTR_ERR(opp_table->clk),
+				    "%s: Couldn't find clock\n", __func__);
 		goto err;
 	}
 
@@ -2109,15 +2309,39 @@ void dev_pm_opp_put_clkname(struct opp_table *opp_table)
 	if (unlikely(!opp_table))
 		return;
 
-	/* Make sure there are no concurrent readers while updating opp_table */
-	WARN_ON(!list_empty(&opp_table->opp_list));
-
 	clk_put(opp_table->clk);
 	opp_table->clk = ERR_PTR(-EINVAL);
 
 	dev_pm_opp_put_opp_table(opp_table);
 }
 EXPORT_SYMBOL_GPL(dev_pm_opp_put_clkname);
+
+static void devm_pm_opp_clkname_release(void *data)
+{
+	dev_pm_opp_put_clkname(data);
+}
+
+/**
+ * devm_pm_opp_set_clkname() - Set clk name for the device
+ * @dev: Device for which clk name is being set.
+ * @name: Clk name.
+ *
+ * This is a resource-managed variant of dev_pm_opp_set_clkname().
+ *
+ * Return: 0 on success and errorno otherwise.
+ */
+int devm_pm_opp_set_clkname(struct device *dev, const char *name)
+{
+	struct opp_table *opp_table;
+
+	opp_table = dev_pm_opp_set_clkname(dev, name);
+	if (IS_ERR(opp_table))
+		return PTR_ERR(opp_table);
+
+	return devm_add_action_or_reset(dev, devm_pm_opp_clkname_release,
+					opp_table);
+}
+EXPORT_SYMBOL_GPL(devm_pm_opp_set_clkname);
 
 /**
  * dev_pm_opp_register_set_opp_helper() - Register custom set OPP helper
@@ -2183,9 +2407,6 @@ void dev_pm_opp_unregister_set_opp_helper(struct opp_table *opp_table)
 	if (unlikely(!opp_table))
 		return;
 
-	/* Make sure there are no concurrent readers while updating opp_table */
-	WARN_ON(!list_empty(&opp_table->opp_list));
-
 	opp_table->set_opp = NULL;
 
 	mutex_lock(&opp_table->lock);
@@ -2209,25 +2430,19 @@ static void devm_pm_opp_unregister_set_opp_helper(void *data)
  *
  * This is a resource-managed version of dev_pm_opp_register_set_opp_helper().
  *
- * Return: pointer to 'struct opp_table' on success and errorno otherwise.
+ * Return: 0 on success and errorno otherwise.
  */
-struct opp_table *
-devm_pm_opp_register_set_opp_helper(struct device *dev,
-				    int (*set_opp)(struct dev_pm_set_opp_data *data))
+int devm_pm_opp_register_set_opp_helper(struct device *dev,
+					int (*set_opp)(struct dev_pm_set_opp_data *data))
 {
 	struct opp_table *opp_table;
-	int err;
 
 	opp_table = dev_pm_opp_register_set_opp_helper(dev, set_opp);
 	if (IS_ERR(opp_table))
-		return opp_table;
+		return PTR_ERR(opp_table);
 
-	err = devm_add_action_or_reset(dev, devm_pm_opp_unregister_set_opp_helper,
-				       opp_table);
-	if (err)
-		return ERR_PTR(err);
-
-	return opp_table;
+	return devm_add_action_or_reset(dev, devm_pm_opp_unregister_set_opp_helper,
+					opp_table);
 }
 EXPORT_SYMBOL_GPL(devm_pm_opp_register_set_opp_helper);
 
@@ -2273,12 +2488,12 @@ static void _opp_detach_genpd(struct opp_table *opp_table)
  * "required-opps" are added in DT.
  */
 struct opp_table *dev_pm_opp_attach_genpd(struct device *dev,
-		const char **names, struct device ***virt_devs)
+		const char * const *names, struct device ***virt_devs)
 {
 	struct opp_table *opp_table;
 	struct device *virt_dev;
 	int index = 0, ret = -EINVAL;
-	const char **name = names;
+	const char * const *name = names;
 
 	opp_table = _add_opp_table(dev, false);
 	if (IS_ERR(opp_table))
@@ -2380,25 +2595,19 @@ static void devm_pm_opp_detach_genpd(void *data)
  *
  * This is a resource-managed version of dev_pm_opp_attach_genpd().
  *
- * Return: pointer to 'struct opp_table' on success and errorno otherwise.
+ * Return: 0 on success and errorno otherwise.
  */
-struct opp_table *
-devm_pm_opp_attach_genpd(struct device *dev, const char **names,
-			 struct device ***virt_devs)
+int devm_pm_opp_attach_genpd(struct device *dev, const char * const *names,
+			     struct device ***virt_devs)
 {
 	struct opp_table *opp_table;
-	int err;
 
 	opp_table = dev_pm_opp_attach_genpd(dev, names, virt_devs);
 	if (IS_ERR(opp_table))
-		return opp_table;
+		return PTR_ERR(opp_table);
 
-	err = devm_add_action_or_reset(dev, devm_pm_opp_detach_genpd,
-				       opp_table);
-	if (err)
-		return ERR_PTR(err);
-
-	return opp_table;
+	return devm_add_action_or_reset(dev, devm_pm_opp_detach_genpd,
+					opp_table);
 }
 EXPORT_SYMBOL_GPL(devm_pm_opp_attach_genpd);
 

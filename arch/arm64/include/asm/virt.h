@@ -67,6 +67,8 @@
  */
 extern u32 __boot_cpu_mode[2];
 
+#define ARM64_VECTOR_TABLE_LEN	SZ_2K
+
 void __hyp_set_vectors(phys_addr_t phys_vector_base);
 void __hyp_reset_vectors(void);
 
@@ -111,6 +113,9 @@ static __always_inline bool has_vhe(void)
 	/*
 	 * Code only run in VHE/NVHE hyp context can assume VHE is present or
 	 * absent. Otherwise fall back to caps.
+	 * This allows the compiler to discard VHE-specific code from the
+	 * nVHE object, reducing the number of external symbol references
+	 * needed to link.
 	 */
 	if (is_vhe_hyp_code())
 		return true;
@@ -126,6 +131,11 @@ static __always_inline bool is_protected_kvm_enabled(void)
 		return false;
 	else
 		return cpus_have_final_cap(ARM64_KVM_PROTECTED_MODE);
+}
+
+static inline bool is_hyp_nvhe(void)
+{
+	return is_hyp_mode_available() && !is_kernel_in_hyp_mode();
 }
 
 #endif /* __ASSEMBLY__ */

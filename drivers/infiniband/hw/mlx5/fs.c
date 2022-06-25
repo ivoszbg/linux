@@ -10,12 +10,13 @@
 #include <rdma/uverbs_std_types.h>
 #include <rdma/mlx5_user_ioctl_cmds.h>
 #include <rdma/mlx5_user_ioctl_verbs.h>
+#include <rdma/ib_hdrs.h>
 #include <rdma/ib_umem.h>
 #include <linux/mlx5/driver.h>
 #include <linux/mlx5/fs.h>
 #include <linux/mlx5/fs_helpers.h>
-#include <linux/mlx5/accel.h>
 #include <linux/mlx5/eswitch.h>
+#include <net/inet_ecn.h>
 #include "mlx5_ib.h"
 #include "counters.h"
 #include "devx.h"
@@ -146,16 +147,6 @@ int parse_flow_flow_action(struct mlx5_ib_flow_action *maction,
 {
 
 	switch (maction->ib_action.type) {
-	case IB_FLOW_ACTION_ESP:
-		if (action->action & (MLX5_FLOW_CONTEXT_ACTION_ENCRYPT |
-				      MLX5_FLOW_CONTEXT_ACTION_DECRYPT))
-			return -EINVAL;
-		/* Currently only AES_GCM keymat is supported by the driver */
-		action->esp_id = (uintptr_t)maction->esp_aes_gcm.ctx;
-		action->action |= is_egress ?
-			MLX5_FLOW_CONTEXT_ACTION_ENCRYPT :
-			MLX5_FLOW_CONTEXT_ACTION_DECRYPT;
-		return 0;
 	case IB_FLOW_ACTION_UNSPECIFIED:
 		if (maction->flow_action_raw.sub_type ==
 		    MLX5_IB_FLOW_ACTION_MODIFY_HEADER) {
@@ -366,14 +357,7 @@ static int parse_flow_attr(struct mlx5_core_dev *mdev,
 			       ib_spec->type & IB_FLOW_SPEC_INNER);
 		break;
 	case IB_FLOW_SPEC_ESP:
-		if (ib_spec->esp.mask.seq)
-			return -EOPNOTSUPP;
-
-		MLX5_SET(fte_match_set_misc, misc_params_c, outer_esp_spi,
-			 ntohl(ib_spec->esp.mask.spi));
-		MLX5_SET(fte_match_set_misc, misc_params_v, outer_esp_spi,
-			 ntohl(ib_spec->esp.val.spi));
-		break;
+		return -EOPNOTSUPP;
 	case IB_FLOW_SPEC_TCP:
 		if (FIELDS_NOT_SUPPORTED(ib_spec->tcp_udp.mask,
 					 LAST_TCP_UDP_FIELD))
@@ -583,47 +567,6 @@ static bool flow_is_multicast_only(const struct ib_flow_attr *ib_attr)
 	}
 
 	return false;
-}
-
-enum valid_spec {
-	VALID_SPEC_INVALID,
-	VALID_SPEC_VALID,
-	VALID_SPEC_NA,
-};
-
-static enum valid_spec
-is_valid_esp_aes_gcm(struct mlx5_core_dev *mdev,
-		     const struct mlx5_flow_spec *spec,
-		     const struct mlx5_flow_act *flow_act,
-		     bool egress)
-{
-	const u32 *match_c = spec->match_criteria;
-	bool is_crypto =
-		(flow_act->action & (MLX5_FLOW_CONTEXT_ACTION_ENCRYPT |
-				     MLX5_FLOW_CONTEXT_ACTION_DECRYPT));
-	bool is_ipsec = mlx5_fs_is_ipsec_flow(match_c);
-	bool is_drop = flow_act->action & MLX5_FLOW_CONTEXT_ACTION_DROP;
-
-	/*
-	 * Currently only crypto is supported in egress, when regular egress
-	 * rules would be supported, always return VALID_SPEC_NA.
-	 */
-	if (!is_crypto)
-		return VALID_SPEC_NA;
-
-	return is_crypto && is_ipsec &&
-		(!egress || (!is_drop &&
-			     !(spec->flow_context.flags & FLOW_CONTEXT_HAS_TAG))) ?
-		VALID_SPEC_VALID : VALID_SPEC_INVALID;
-}
-
-static bool is_valid_spec(struct mlx5_core_dev *mdev,
-			  const struct mlx5_flow_spec *spec,
-			  const struct mlx5_flow_act *flow_act,
-			  bool egress)
-{
-	/* We curretly only support ipsec egress flow */
-	return is_valid_esp_aes_gcm(mdev, spec, flow_act, egress) != VALID_SPEC_INVALID;
 }
 
 static bool is_valid_ethertype(struct mlx5_core_dev *mdev,
@@ -847,6 +790,191 @@ static struct mlx5_ib_flow_prio *get_flow_table(struct mlx5_ib_dev *dev,
 	return prio;
 }
 
+enum {
+	RDMA_RX_ECN_OPCOUNTER_PRIO,
+	RDMA_RX_CNP_OPCOUNTER_PRIO,
+};
+
+enum {
+	RDMA_TX_CNP_OPCOUNTER_PRIO,
+};
+
+static int set_vhca_port_spec(struct mlx5_ib_dev *dev, u32 port_num,
+			      struct mlx5_flow_spec *spec)
+{
+	if (!MLX5_CAP_FLOWTABLE_RDMA_RX(dev->mdev,
+					ft_field_support.source_vhca_port) ||
+	    !MLX5_CAP_FLOWTABLE_RDMA_TX(dev->mdev,
+					ft_field_support.source_vhca_port))
+		return -EOPNOTSUPP;
+
+	MLX5_SET_TO_ONES(fte_match_param, &spec->match_criteria,
+			 misc_parameters.source_vhca_port);
+	MLX5_SET(fte_match_param, &spec->match_value,
+		 misc_parameters.source_vhca_port, port_num);
+
+	return 0;
+}
+
+static int set_ecn_ce_spec(struct mlx5_ib_dev *dev, u32 port_num,
+			   struct mlx5_flow_spec *spec, int ipv)
+{
+	if (!MLX5_CAP_FLOWTABLE_RDMA_RX(dev->mdev,
+					ft_field_support.outer_ip_version))
+		return -EOPNOTSUPP;
+
+	if (mlx5_core_mp_enabled(dev->mdev) &&
+	    set_vhca_port_spec(dev, port_num, spec))
+		return -EOPNOTSUPP;
+
+	MLX5_SET_TO_ONES(fte_match_param, spec->match_criteria,
+			 outer_headers.ip_ecn);
+	MLX5_SET(fte_match_param, spec->match_value, outer_headers.ip_ecn,
+		 INET_ECN_CE);
+	MLX5_SET_TO_ONES(fte_match_param, spec->match_criteria,
+			 outer_headers.ip_version);
+	MLX5_SET(fte_match_param, spec->match_value, outer_headers.ip_version,
+		 ipv);
+
+	spec->match_criteria_enable =
+		get_match_criteria_enable(spec->match_criteria);
+
+	return 0;
+}
+
+static int set_cnp_spec(struct mlx5_ib_dev *dev, u32 port_num,
+			struct mlx5_flow_spec *spec)
+{
+	if (mlx5_core_mp_enabled(dev->mdev) &&
+	    set_vhca_port_spec(dev, port_num, spec))
+		return -EOPNOTSUPP;
+
+	MLX5_SET_TO_ONES(fte_match_param, spec->match_criteria,
+			 misc_parameters.bth_opcode);
+	MLX5_SET(fte_match_param, spec->match_value, misc_parameters.bth_opcode,
+		 IB_BTH_OPCODE_CNP);
+
+	spec->match_criteria_enable =
+		get_match_criteria_enable(spec->match_criteria);
+
+	return 0;
+}
+
+int mlx5_ib_fs_add_op_fc(struct mlx5_ib_dev *dev, u32 port_num,
+			 struct mlx5_ib_op_fc *opfc,
+			 enum mlx5_ib_optional_counter_type type)
+{
+	enum mlx5_flow_namespace_type fn_type;
+	int priority, i, err, spec_num;
+	struct mlx5_flow_act flow_act = {};
+	struct mlx5_flow_destination dst;
+	struct mlx5_flow_namespace *ns;
+	struct mlx5_ib_flow_prio *prio;
+	struct mlx5_flow_spec *spec;
+
+	spec = kcalloc(MAX_OPFC_RULES, sizeof(*spec), GFP_KERNEL);
+	if (!spec)
+		return -ENOMEM;
+
+	switch (type) {
+	case MLX5_IB_OPCOUNTER_CC_RX_CE_PKTS:
+		if (set_ecn_ce_spec(dev, port_num, &spec[0],
+				    MLX5_FS_IPV4_VERSION) ||
+		    set_ecn_ce_spec(dev, port_num, &spec[1],
+				    MLX5_FS_IPV6_VERSION)) {
+			err = -EOPNOTSUPP;
+			goto free;
+		}
+		spec_num = 2;
+		fn_type = MLX5_FLOW_NAMESPACE_RDMA_RX_COUNTERS;
+		priority = RDMA_RX_ECN_OPCOUNTER_PRIO;
+		break;
+
+	case MLX5_IB_OPCOUNTER_CC_RX_CNP_PKTS:
+		if (!MLX5_CAP_FLOWTABLE(dev->mdev,
+					ft_field_support_2_nic_receive_rdma.bth_opcode) ||
+		    set_cnp_spec(dev, port_num, &spec[0])) {
+			err = -EOPNOTSUPP;
+			goto free;
+		}
+		spec_num = 1;
+		fn_type = MLX5_FLOW_NAMESPACE_RDMA_RX_COUNTERS;
+		priority = RDMA_RX_CNP_OPCOUNTER_PRIO;
+		break;
+
+	case MLX5_IB_OPCOUNTER_CC_TX_CNP_PKTS:
+		if (!MLX5_CAP_FLOWTABLE(dev->mdev,
+					ft_field_support_2_nic_transmit_rdma.bth_opcode) ||
+		    set_cnp_spec(dev, port_num, &spec[0])) {
+			err = -EOPNOTSUPP;
+			goto free;
+		}
+		spec_num = 1;
+		fn_type = MLX5_FLOW_NAMESPACE_RDMA_TX_COUNTERS;
+		priority = RDMA_TX_CNP_OPCOUNTER_PRIO;
+		break;
+
+	default:
+		err = -EOPNOTSUPP;
+		goto free;
+	}
+
+	ns = mlx5_get_flow_namespace(dev->mdev, fn_type);
+	if (!ns) {
+		err = -EOPNOTSUPP;
+		goto free;
+	}
+
+	prio = &dev->flow_db->opfcs[type];
+	if (!prio->flow_table) {
+		prio = _get_prio(ns, prio, priority,
+				 dev->num_ports * MAX_OPFC_RULES, 1, 0);
+		if (IS_ERR(prio)) {
+			err = PTR_ERR(prio);
+			goto free;
+		}
+	}
+
+	dst.type = MLX5_FLOW_DESTINATION_TYPE_COUNTER;
+	dst.counter_id = mlx5_fc_id(opfc->fc);
+
+	flow_act.action =
+		MLX5_FLOW_CONTEXT_ACTION_COUNT | MLX5_FLOW_CONTEXT_ACTION_ALLOW;
+
+	for (i = 0; i < spec_num; i++) {
+		opfc->rule[i] = mlx5_add_flow_rules(prio->flow_table, &spec[i],
+						    &flow_act, &dst, 1);
+		if (IS_ERR(opfc->rule[i])) {
+			err = PTR_ERR(opfc->rule[i]);
+			goto del_rules;
+		}
+	}
+	prio->refcount += spec_num;
+	kfree(spec);
+
+	return 0;
+
+del_rules:
+	for (i -= 1; i >= 0; i--)
+		mlx5_del_flow_rules(opfc->rule[i]);
+	put_flow_table(dev, prio, false);
+free:
+	kfree(spec);
+	return err;
+}
+
+void mlx5_ib_fs_remove_op_fc(struct mlx5_ib_dev *dev,
+			     struct mlx5_ib_op_fc *opfc,
+			     enum mlx5_ib_optional_counter_type type)
+{
+	int i;
+
+	for (i = 0; i < MAX_OPFC_RULES && opfc->rule[i]; i++) {
+		mlx5_del_flow_rules(opfc->rule[i]);
+		put_flow_table(dev, &dev->flow_db->opfcs[type], true);
+	}
+}
+
 static void set_underlay_qp(struct mlx5_ib_dev *dev,
 			    struct mlx5_flow_spec *spec,
 			    u32 underlay_qpn)
@@ -879,7 +1007,7 @@ static void mlx5_ib_set_rule_source_port(struct mlx5_ib_dev *dev,
 				    misc_parameters_2);
 
 		MLX5_SET(fte_match_set_misc2, misc, metadata_reg_c_0,
-			 mlx5_eswitch_get_vport_metadata_for_match(esw,
+			 mlx5_eswitch_get_vport_metadata_for_match(rep->esw,
 								   rep->vport));
 		misc = MLX5_ADDR_OF(fte_match_param, spec->match_criteria,
 				    misc_parameters_2);
@@ -966,12 +1094,6 @@ static struct mlx5_ib_flow_handler *_create_flow_rule(struct mlx5_ib_dev *dev,
 	}
 
 	spec->match_criteria_enable = get_match_criteria_enable(spec->match_criteria);
-
-	if (is_egress &&
-	    !is_valid_spec(dev->mdev, spec, &flow_act, is_egress)) {
-		err = -EINVAL;
-		goto free;
-	}
 
 	if (flow_act.action & MLX5_FLOW_CONTEXT_ACTION_COUNT) {
 		struct mlx5_ib_mcounters *mcounters;
@@ -1194,9 +1316,8 @@ static struct ib_flow *mlx5_ib_create_flow(struct ib_qp *qp,
 		goto free_ucmd;
 	}
 
-	if (flow_attr->port > dev->num_ports ||
-	    (flow_attr->flags &
-	     ~(IB_FLOW_ATTR_FLAGS_DONT_TRAP | IB_FLOW_ATTR_FLAGS_EGRESS))) {
+	if (flow_attr->flags &
+	    ~(IB_FLOW_ATTR_FLAGS_DONT_TRAP | IB_FLOW_ATTR_FLAGS_EGRESS)) {
 		err = -EINVAL;
 		goto free_ucmd;
 	}
@@ -1322,7 +1443,7 @@ _get_flow_table(struct mlx5_ib_dev *dev,
 		    !esw_encap)
 			flags |= MLX5_FLOW_TABLE_TUNNEL_EN_REFORMAT;
 		break;
-	case MLX5_FLOW_NAMESPACE_FDB:
+	case MLX5_FLOW_NAMESPACE_FDB_BYPASS:
 		max_table_size = BIT(
 			MLX5_CAP_ESW_FLOWTABLE_FDB(dev->mdev, log_max_ft_size));
 		if (MLX5_CAP_ESW_FLOWTABLE_FDB(dev->mdev, decap) && esw_encap)
@@ -1331,7 +1452,7 @@ _get_flow_table(struct mlx5_ib_dev *dev,
 					       reformat_l3_tunnel_to_l2) &&
 		    esw_encap)
 			flags |= MLX5_FLOW_TABLE_TUNNEL_EN_REFORMAT;
-		priority = FDB_BYPASS_PATH;
+		priority = fs_matcher->priority;
 		break;
 	case MLX5_FLOW_NAMESPACE_RDMA_RX:
 		max_table_size = BIT(
@@ -1360,8 +1481,8 @@ _get_flow_table(struct mlx5_ib_dev *dev,
 	case MLX5_FLOW_NAMESPACE_EGRESS:
 		prio = &dev->flow_db->egress_prios[priority];
 		break;
-	case MLX5_FLOW_NAMESPACE_FDB:
-		prio = &dev->flow_db->fdb;
+	case MLX5_FLOW_NAMESPACE_FDB_BYPASS:
+		prio = &dev->flow_db->fdb[priority];
 		break;
 	case MLX5_FLOW_NAMESPACE_RDMA_RX:
 		prio = &dev->flow_db->rdma_rx[priority];
@@ -1528,8 +1649,8 @@ static struct mlx5_ib_flow_handler *raw_fs_rule_add(
 		dst_num++;
 	}
 
-	handler = _create_raw_flow_rule(dev, ft_prio, dst, fs_matcher,
-					flow_context, flow_act,
+	handler = _create_raw_flow_rule(dev, ft_prio, dst_num ? dst : NULL,
+					fs_matcher, flow_context, flow_act,
 					cmd_in, inlen, dst_num);
 
 	if (IS_ERR(handler)) {
@@ -1552,149 +1673,6 @@ unlock:
 	kfree(dst);
 
 	return ERR_PTR(err);
-}
-
-static u32 mlx5_ib_flow_action_flags_to_accel_xfrm_flags(u32 mlx5_flags)
-{
-	u32 flags = 0;
-
-	if (mlx5_flags & MLX5_IB_UAPI_FLOW_ACTION_FLAGS_REQUIRE_METADATA)
-		flags |= MLX5_ACCEL_XFRM_FLAG_REQUIRE_METADATA;
-
-	return flags;
-}
-
-#define MLX5_FLOW_ACTION_ESP_CREATE_LAST_SUPPORTED                             \
-	MLX5_IB_UAPI_FLOW_ACTION_FLAGS_REQUIRE_METADATA
-static struct ib_flow_action *
-mlx5_ib_create_flow_action_esp(struct ib_device *device,
-			       const struct ib_flow_action_attrs_esp *attr,
-			       struct uverbs_attr_bundle *attrs)
-{
-	struct mlx5_ib_dev *mdev = to_mdev(device);
-	struct ib_uverbs_flow_action_esp_keymat_aes_gcm *aes_gcm;
-	struct mlx5_accel_esp_xfrm_attrs accel_attrs = {};
-	struct mlx5_ib_flow_action *action;
-	u64 action_flags;
-	u64 flags;
-	int err = 0;
-
-	err = uverbs_get_flags64(
-		&action_flags, attrs, MLX5_IB_ATTR_CREATE_FLOW_ACTION_FLAGS,
-		((MLX5_FLOW_ACTION_ESP_CREATE_LAST_SUPPORTED << 1) - 1));
-	if (err)
-		return ERR_PTR(err);
-
-	flags = mlx5_ib_flow_action_flags_to_accel_xfrm_flags(action_flags);
-
-	/* We current only support a subset of the standard features. Only a
-	 * keymat of type AES_GCM, with icv_len == 16, iv_algo == SEQ and esn
-	 * (with overlap). Full offload mode isn't supported.
-	 */
-	if (!attr->keymat || attr->replay || attr->encap ||
-	    attr->spi || attr->seq || attr->tfc_pad ||
-	    attr->hard_limit_pkts ||
-	    (attr->flags & ~(IB_FLOW_ACTION_ESP_FLAGS_ESN_TRIGGERED |
-			     IB_UVERBS_FLOW_ACTION_ESP_FLAGS_ENCRYPT)))
-		return ERR_PTR(-EOPNOTSUPP);
-
-	if (attr->keymat->protocol !=
-	    IB_UVERBS_FLOW_ACTION_ESP_KEYMAT_AES_GCM)
-		return ERR_PTR(-EOPNOTSUPP);
-
-	aes_gcm = &attr->keymat->keymat.aes_gcm;
-
-	if (aes_gcm->icv_len != 16 ||
-	    aes_gcm->iv_algo != IB_UVERBS_FLOW_ACTION_IV_ALGO_SEQ)
-		return ERR_PTR(-EOPNOTSUPP);
-
-	action = kmalloc(sizeof(*action), GFP_KERNEL);
-	if (!action)
-		return ERR_PTR(-ENOMEM);
-
-	action->esp_aes_gcm.ib_flags = attr->flags;
-	memcpy(&accel_attrs.keymat.aes_gcm.aes_key, &aes_gcm->aes_key,
-	       sizeof(accel_attrs.keymat.aes_gcm.aes_key));
-	accel_attrs.keymat.aes_gcm.key_len = aes_gcm->key_len * 8;
-	memcpy(&accel_attrs.keymat.aes_gcm.salt, &aes_gcm->salt,
-	       sizeof(accel_attrs.keymat.aes_gcm.salt));
-	memcpy(&accel_attrs.keymat.aes_gcm.seq_iv, &aes_gcm->iv,
-	       sizeof(accel_attrs.keymat.aes_gcm.seq_iv));
-	accel_attrs.keymat.aes_gcm.icv_len = aes_gcm->icv_len * 8;
-	accel_attrs.keymat.aes_gcm.iv_algo = MLX5_ACCEL_ESP_AES_GCM_IV_ALGO_SEQ;
-	accel_attrs.keymat_type = MLX5_ACCEL_ESP_KEYMAT_AES_GCM;
-
-	accel_attrs.esn = attr->esn;
-	if (attr->flags & IB_FLOW_ACTION_ESP_FLAGS_ESN_TRIGGERED)
-		accel_attrs.flags |= MLX5_ACCEL_ESP_FLAGS_ESN_TRIGGERED;
-	if (attr->flags & IB_UVERBS_FLOW_ACTION_ESP_FLAGS_ESN_NEW_WINDOW)
-		accel_attrs.flags |= MLX5_ACCEL_ESP_FLAGS_ESN_STATE_OVERLAP;
-
-	if (attr->flags & IB_UVERBS_FLOW_ACTION_ESP_FLAGS_ENCRYPT)
-		accel_attrs.action |= MLX5_ACCEL_ESP_ACTION_ENCRYPT;
-
-	action->esp_aes_gcm.ctx =
-		mlx5_accel_esp_create_xfrm(mdev->mdev, &accel_attrs, flags);
-	if (IS_ERR(action->esp_aes_gcm.ctx)) {
-		err = PTR_ERR(action->esp_aes_gcm.ctx);
-		goto err_parse;
-	}
-
-	action->esp_aes_gcm.ib_flags = attr->flags;
-
-	return &action->ib_action;
-
-err_parse:
-	kfree(action);
-	return ERR_PTR(err);
-}
-
-static int
-mlx5_ib_modify_flow_action_esp(struct ib_flow_action *action,
-			       const struct ib_flow_action_attrs_esp *attr,
-			       struct uverbs_attr_bundle *attrs)
-{
-	struct mlx5_ib_flow_action *maction = to_mflow_act(action);
-	struct mlx5_accel_esp_xfrm_attrs accel_attrs;
-	int err = 0;
-
-	if (attr->keymat || attr->replay || attr->encap ||
-	    attr->spi || attr->seq || attr->tfc_pad ||
-	    attr->hard_limit_pkts ||
-	    (attr->flags & ~(IB_FLOW_ACTION_ESP_FLAGS_ESN_TRIGGERED |
-			     IB_FLOW_ACTION_ESP_FLAGS_MOD_ESP_ATTRS |
-			     IB_UVERBS_FLOW_ACTION_ESP_FLAGS_ESN_NEW_WINDOW)))
-		return -EOPNOTSUPP;
-
-	/* Only the ESN value or the MLX5_ACCEL_ESP_FLAGS_ESN_STATE_OVERLAP can
-	 * be modified.
-	 */
-	if (!(maction->esp_aes_gcm.ib_flags &
-	      IB_FLOW_ACTION_ESP_FLAGS_ESN_TRIGGERED) &&
-	    attr->flags & (IB_FLOW_ACTION_ESP_FLAGS_ESN_TRIGGERED |
-			   IB_UVERBS_FLOW_ACTION_ESP_FLAGS_ESN_NEW_WINDOW))
-		return -EINVAL;
-
-	memcpy(&accel_attrs, &maction->esp_aes_gcm.ctx->attrs,
-	       sizeof(accel_attrs));
-
-	accel_attrs.esn = attr->esn;
-	if (attr->flags & IB_UVERBS_FLOW_ACTION_ESP_FLAGS_ESN_NEW_WINDOW)
-		accel_attrs.flags |= MLX5_ACCEL_ESP_FLAGS_ESN_STATE_OVERLAP;
-	else
-		accel_attrs.flags &= ~MLX5_ACCEL_ESP_FLAGS_ESN_STATE_OVERLAP;
-
-	err = mlx5_accel_esp_modify_xfrm(maction->esp_aes_gcm.ctx,
-					 &accel_attrs);
-	if (err)
-		return err;
-
-	maction->esp_aes_gcm.ib_flags &=
-		~IB_UVERBS_FLOW_ACTION_ESP_FLAGS_ESN_NEW_WINDOW;
-	maction->esp_aes_gcm.ib_flags |=
-		attr->flags & IB_UVERBS_FLOW_ACTION_ESP_FLAGS_ESN_NEW_WINDOW;
-
-	return 0;
 }
 
 static void destroy_flow_action_raw(struct mlx5_ib_flow_action *maction)
@@ -1720,13 +1698,6 @@ static int mlx5_ib_destroy_flow_action(struct ib_flow_action *action)
 	struct mlx5_ib_flow_action *maction = to_mflow_act(action);
 
 	switch (action->type) {
-	case IB_FLOW_ACTION_ESP:
-		/*
-		 * We only support aes_gcm by now, so we implicitly know this is
-		 * the underline crypto.
-		 */
-		mlx5_accel_esp_destroy_xfrm(maction->esp_aes_gcm.ctx);
-		break;
 	case IB_FLOW_ACTION_UNSPECIFIED:
 		destroy_flow_action_raw(maction);
 		break;
@@ -1751,7 +1722,7 @@ mlx5_ib_ft_type_to_namespace(enum mlx5_ib_uapi_flow_table_type table_type,
 		*namespace = MLX5_FLOW_NAMESPACE_EGRESS;
 		break;
 	case MLX5_IB_UAPI_FLOW_TABLE_TYPE_FDB:
-		*namespace = MLX5_FLOW_NAMESPACE_FDB;
+		*namespace = MLX5_FLOW_NAMESPACE_FDB_BYPASS;
 		break;
 	case MLX5_IB_UAPI_FLOW_TABLE_TYPE_RDMA_RX:
 		*namespace = MLX5_FLOW_NAMESPACE_RDMA_RX;
@@ -1843,8 +1814,8 @@ static int get_dests(struct uverbs_attr_bundle *attrs,
 	}
 
 	/* Allow only DEVX object, drop as dest for FDB */
-	if (fs_matcher->ns_type == MLX5_FLOW_NAMESPACE_FDB && !(dest_devx ||
-	     (*flags & MLX5_IB_ATTR_CREATE_FLOW_FLAGS_DROP)))
+	if (fs_matcher->ns_type == MLX5_FLOW_NAMESPACE_FDB_BYPASS &&
+	    !(dest_devx || (*flags & MLX5_IB_ATTR_CREATE_FLOW_FLAGS_DROP)))
 		return -EINVAL;
 
 	/* Allow only DEVX object or QP as dest when inserting to RDMA_RX */
@@ -1864,7 +1835,7 @@ static int get_dests(struct uverbs_attr_bundle *attrs,
 		if (!is_flow_dest(devx_obj, dest_id, dest_type))
 			return -EINVAL;
 		/* Allow only flow table as dest when inserting to FDB or RDMA_RX */
-		if ((fs_matcher->ns_type == MLX5_FLOW_NAMESPACE_FDB ||
+		if ((fs_matcher->ns_type == MLX5_FLOW_NAMESPACE_FDB_BYPASS ||
 		     fs_matcher->ns_type == MLX5_FLOW_NAMESPACE_RDMA_RX) &&
 		    *dest_type != MLX5_FLOW_DESTINATION_TYPE_FLOW_TABLE)
 			return -EINVAL;
@@ -1885,8 +1856,9 @@ static int get_dests(struct uverbs_attr_bundle *attrs,
 		else
 			*dest_id = mqp->raw_packet_qp.rq.tirn;
 		*dest_type = MLX5_FLOW_DESTINATION_TYPE_TIR;
-	} else if (fs_matcher->ns_type == MLX5_FLOW_NAMESPACE_EGRESS ||
-		   fs_matcher->ns_type == MLX5_FLOW_NAMESPACE_RDMA_TX) {
+	} else if ((fs_matcher->ns_type == MLX5_FLOW_NAMESPACE_EGRESS ||
+		    fs_matcher->ns_type == MLX5_FLOW_NAMESPACE_RDMA_TX) &&
+		   !(*flags & MLX5_IB_ATTR_CREATE_FLOW_FLAGS_DROP)) {
 		*dest_type = MLX5_FLOW_DESTINATION_TYPE_PORT;
 	}
 
@@ -2133,6 +2105,12 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_FLOW_MATCHER_CREATE)(
 	if (err)
 		goto end;
 
+	if (obj->ns_type == MLX5_FLOW_NAMESPACE_FDB_BYPASS &&
+	    mlx5_eswitch_mode(dev->mdev) != MLX5_ESWITCH_OFFLOADS) {
+		err = -EINVAL;
+		goto end;
+	}
+
 	uobj->object = obj;
 	obj->mdev = dev->mdev;
 	atomic_set(&obj->usecnt, 0);
@@ -2279,6 +2257,7 @@ static int mlx5_ib_flow_action_create_packet_reformat_ctx(
 	u8 ft_type, u8 dv_prt,
 	void *in, size_t len)
 {
+	struct mlx5_pkt_reformat_params reformat_params;
 	enum mlx5_flow_namespace_type namespace;
 	u8 prm_prt;
 	int ret;
@@ -2291,9 +2270,13 @@ static int mlx5_ib_flow_action_create_packet_reformat_ctx(
 	if (ret)
 		return ret;
 
+	memset(&reformat_params, 0, sizeof(reformat_params));
+	reformat_params.type = prm_prt;
+	reformat_params.size = len;
+	reformat_params.data = in;
 	maction->flow_action_raw.pkt_reformat =
-		mlx5_packet_reformat_alloc(dev->mdev, prm_prt, len,
-					   in, namespace);
+		mlx5_packet_reformat_alloc(dev->mdev, &reformat_params,
+					   namespace);
 	if (IS_ERR(maction->flow_action_raw.pkt_reformat)) {
 		ret = PTR_ERR(maction->flow_action_raw.pkt_reformat);
 		return ret;
@@ -2511,11 +2494,6 @@ static const struct ib_device_ops flow_ops = {
 	.destroy_flow_action = mlx5_ib_destroy_flow_action,
 };
 
-static const struct ib_device_ops flow_ipsec_ops = {
-	.create_flow_action_esp = mlx5_ib_create_flow_action_esp,
-	.modify_flow_action_esp = mlx5_ib_modify_flow_action_esp,
-};
-
 int mlx5_ib_fs_init(struct mlx5_ib_dev *dev)
 {
 	dev->flow_db = kzalloc(sizeof(*dev->flow_db), GFP_KERNEL);
@@ -2526,9 +2504,5 @@ int mlx5_ib_fs_init(struct mlx5_ib_dev *dev)
 	mutex_init(&dev->flow_db->lock);
 
 	ib_set_device_ops(&dev->ib_dev, &flow_ops);
-	if (mlx5_accel_ipsec_device_caps(dev->mdev) &
-	    MLX5_ACCEL_IPSEC_CAP_DEVICE)
-		ib_set_device_ops(&dev->ib_dev, &flow_ipsec_ops);
-
 	return 0;
 }

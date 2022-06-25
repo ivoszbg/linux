@@ -19,6 +19,9 @@
 #include <linux/io.h>
 #include <linux/of_gpio.h>
 #include <linux/slab.h>
+#include <linux/of_address.h>
+#include <linux/of_irq.h>
+
 #include <asm/time.h>
 #include <asm/mpc52xx.h>
 
@@ -415,7 +418,7 @@ static int mpc52xx_spi_probe(struct platform_device *op)
 	}
 
 	dev_dbg(&op->dev, "allocating spi_master struct\n");
-	master = spi_alloc_master(&op->dev, sizeof *ms);
+	master = spi_alloc_master(&op->dev, sizeof(*ms));
 	if (!master) {
 		rc = -ENOMEM;
 		goto err_alloc;

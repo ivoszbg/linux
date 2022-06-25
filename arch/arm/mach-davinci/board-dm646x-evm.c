@@ -43,9 +43,8 @@
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
 
-#include <mach/common.h>
-#include <mach/serial.h>
-
+#include "common.h"
+#include "serial.h"
 #include "davinci.h"
 #include "irqs.h"
 
@@ -315,15 +314,13 @@ static int evm_pcf_setup(struct i2c_client *client, int gpio,
 	return evm_led_setup(client, gpio+4, 4, c);
 }
 
-static int evm_pcf_teardown(struct i2c_client *client, int gpio,
+static void evm_pcf_teardown(struct i2c_client *client, int gpio,
 			unsigned int ngpio, void *c)
 {
 	BUG_ON(ngpio < 8);
 
 	evm_sw_teardown(client, gpio, 4, c);
 	evm_led_teardown(client, gpio+4, 4, c);
-
-	return 0;
 }
 
 static struct pcf857x_platform_data pcf_data = {
@@ -361,6 +358,10 @@ static struct nvmem_cell_lookup dm646x_evm_nvmem_cell_lookup = {
 static const struct property_entry eeprom_properties[] = {
 	PROPERTY_ENTRY_U32("pagesize", 64),
 	{ }
+};
+
+static const struct software_node eeprom_node = {
+	.properties = eeprom_properties,
 };
 #endif
 
@@ -430,7 +431,7 @@ static void evm_init_cpld(void)
 static struct i2c_board_info __initdata i2c_info[] =  {
 	{
 		I2C_BOARD_INFO("24c256", 0x50),
-		.properties  = eeprom_properties,
+		.swnode = &eeprom_node,
 	},
 	{
 		I2C_BOARD_INFO("pcf8574a", 0x38),

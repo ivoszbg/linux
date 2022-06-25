@@ -225,8 +225,7 @@ static int cs4341_probe(struct device *dev)
 }
 
 #if IS_ENABLED(CONFIG_I2C)
-static int cs4341_i2c_probe(struct i2c_client *i2c,
-			    const struct i2c_device_id *id)
+static int cs4341_i2c_probe(struct i2c_client *i2c)
 {
 	struct cs4341_priv *cs4341;
 
@@ -260,7 +259,7 @@ static struct i2c_driver cs4341_i2c_driver = {
 		.name = "cs4341-i2c",
 		.of_match_table = of_match_ptr(cs4341_dt_ids),
 	},
-	.probe = cs4341_i2c_probe,
+	.probe_new = cs4341_i2c_probe,
 	.id_table = cs4341_i2c_id,
 };
 #endif
@@ -305,12 +304,19 @@ static int cs4341_spi_probe(struct spi_device *spi)
 	return cs4341_probe(&spi->dev);
 }
 
+static const struct spi_device_id cs4341_spi_ids[] = {
+	{ "cs4341a" },
+	{ }
+};
+MODULE_DEVICE_TABLE(spi, cs4341_spi_ids);
+
 static struct spi_driver cs4341_spi_driver = {
 	.driver = {
 		.name = "cs4341-spi",
 		.of_match_table = of_match_ptr(cs4341_dt_ids),
 	},
 	.probe = cs4341_spi_probe,
+	.id_table = cs4341_spi_ids,
 };
 #endif
 

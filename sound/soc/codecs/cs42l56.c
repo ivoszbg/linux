@@ -391,9 +391,9 @@ static const struct snd_kcontrol_new cs42l56_snd_controls[] = {
 	SOC_DOUBLE("ADC Boost Switch", CS42L56_GAIN_BIAS_CTL, 3, 2, 1, 1),
 
 	SOC_DOUBLE_R_SX_TLV("Headphone Volume", CS42L56_HPA_VOLUME,
-			      CS42L56_HPB_VOLUME, 0, 0x84, 0x48, hl_tlv),
+			      CS42L56_HPB_VOLUME, 0, 0x44, 0x48, hl_tlv),
 	SOC_DOUBLE_R_SX_TLV("LineOut Volume", CS42L56_LOA_VOLUME,
-			      CS42L56_LOB_VOLUME, 0, 0x84, 0x48, hl_tlv),
+			      CS42L56_LOB_VOLUME, 0, 0x44, 0x48, hl_tlv),
 
 	SOC_SINGLE_TLV("Bass Shelving Volume", CS42L56_TONE_CTL,
 			0, 0x00, 1, tone_tlv),
@@ -1021,9 +1021,8 @@ static int cs42l56_beep_event(struct input_dev *dev, unsigned int type,
 	return 0;
 }
 
-static ssize_t cs42l56_beep_set(struct device *dev,
-			       struct device_attribute *attr,
-			       const char *buf, size_t count)
+static ssize_t beep_store(struct device *dev, struct device_attribute *attr,
+			  const char *buf, size_t count)
 {
 	struct cs42l56_private *cs42l56 = dev_get_drvdata(dev);
 	long int time;
@@ -1038,7 +1037,7 @@ static ssize_t cs42l56_beep_set(struct device *dev,
 	return count;
 }
 
-static DEVICE_ATTR(beep, 0200, NULL, cs42l56_beep_set);
+static DEVICE_ATTR_WO(beep);
 
 static void cs42l56_init_beep(struct snd_soc_component *component)
 {
@@ -1168,14 +1167,13 @@ static int cs42l56_handle_of_data(struct i2c_client *i2c_client,
 	return 0;
 }
 
-static int cs42l56_i2c_probe(struct i2c_client *i2c_client,
-			     const struct i2c_device_id *id)
+static int cs42l56_i2c_probe(struct i2c_client *i2c_client)
 {
 	struct cs42l56_private *cs42l56;
 	struct cs42l56_platform_data *pdata =
 		dev_get_platdata(&i2c_client->dev);
 	int ret, i;
-	unsigned int devid = 0;
+	unsigned int devid;
 	unsigned int alpha_rev, metal_rev;
 	unsigned int reg;
 
@@ -1245,6 +1243,11 @@ static int cs42l56_i2c_probe(struct i2c_client *i2c_client,
 	}
 
 	ret = regmap_read(cs42l56->regmap, CS42L56_CHIP_ID_1, &reg);
+	if (ret) {
+		dev_err(&i2c_client->dev, "Failed to read chip ID: %d\n", ret);
+		goto err_enable;
+	}
+
 	devid = reg & CS42L56_CHIP_ID_MASK;
 	if (devid != CS42L56_DEVID) {
 		dev_err(&i2c_client->dev,
@@ -1346,7 +1349,7 @@ static struct i2c_driver cs42l56_i2c_driver = {
 		.of_match_table = cs42l56_of_match,
 	},
 	.id_table = cs42l56_id,
-	.probe =    cs42l56_i2c_probe,
+	.probe_new = cs42l56_i2c_probe,
 	.remove =   cs42l56_i2c_remove,
 };
 

@@ -60,7 +60,6 @@
 
 #include <linux/can/dev.h>
 #include <linux/can/error.h>
-#include <linux/can/led.h>
 
 #include "sja1000.h"
 
@@ -372,18 +371,17 @@ static void sja1000_rx(struct net_device *dev)
 	} else {
 		for (i = 0; i < cf->len; i++)
 			cf->data[i] = priv->read_reg(priv, dreg++);
+
+		stats->rx_bytes += cf->len;
 	}
+	stats->rx_packets++;
 
 	cf->can_id = id;
 
 	/* release receive buffer */
 	sja1000_write_cmdreg(priv, CMD_RRB);
 
-	stats->rx_packets++;
-	stats->rx_bytes += cf->len;
 	netif_rx(skb);
-
-	can_led_event(dev, CAN_LED_EVENT_RX);
 }
 
 static int sja1000_err(struct net_device *dev, uint8_t isrc, uint8_t status)
@@ -487,8 +485,6 @@ static int sja1000_err(struct net_device *dev, uint8_t isrc, uint8_t status)
 			can_bus_off(dev);
 	}
 
-	stats->rx_packets++;
-	stats->rx_bytes += cf->len;
 	netif_rx(skb);
 
 	return 0;
@@ -525,16 +521,13 @@ irqreturn_t sja1000_interrupt(int irq, void *dev_id)
 			if (priv->can.ctrlmode & CAN_CTRLMODE_ONE_SHOT &&
 			    !(status & SR_TCS)) {
 				stats->tx_errors++;
-				can_free_echo_skb(dev, 0);
+				can_free_echo_skb(dev, 0, NULL);
 			} else {
 				/* transmission complete */
-				stats->tx_bytes +=
-					priv->read_reg(priv, SJA1000_FI) & 0xf;
+				stats->tx_bytes += can_get_echo_skb(dev, 0, NULL);
 				stats->tx_packets++;
-				can_get_echo_skb(dev, 0, NULL);
 			}
 			netif_wake_queue(dev);
-			can_led_event(dev, CAN_LED_EVENT_TX);
 		}
 		if (isrc & IRQ_RI) {
 			/* receive interrupt */
@@ -590,8 +583,6 @@ static int sja1000_open(struct net_device *dev)
 	/* init and start chi */
 	sja1000_start(dev);
 
-	can_led_event(dev, CAN_LED_EVENT_OPEN);
-
 	netif_start_queue(dev);
 
 	return 0;
@@ -608,8 +599,6 @@ static int sja1000_close(struct net_device *dev)
 		free_irq(dev->irq, (void *)dev);
 
 	close_candev(dev);
-
-	can_led_event(dev, CAN_LED_EVENT_STOP);
 
 	return 0;
 }
@@ -675,9 +664,6 @@ int register_sja1000dev(struct net_device *dev)
 	chipset_init(dev);
 
 	ret =  register_candev(dev);
-
-	if (!ret)
-		devm_can_led_init(dev);
 
 	return ret;
 }

@@ -29,8 +29,7 @@ static int st_lsm6dsx_i2c_probe(struct i2c_client *client,
 
 	regmap = devm_regmap_init_i2c(client, &st_lsm6dsx_i2c_regmap_config);
 	if (IS_ERR(regmap)) {
-		dev_err(&client->dev, "Failed to register i2c regmap %d\n",
-			(int)PTR_ERR(regmap));
+		dev_err(&client->dev, "Failed to register i2c regmap %ld\n", PTR_ERR(regmap));
 		return PTR_ERR(regmap);
 	}
 
@@ -102,6 +101,10 @@ static const struct of_device_id st_lsm6dsx_i2c_of_match[] = {
 		.compatible = "st,lsm6dsop",
 		.data = (void *)ST_LSM6DSOP_ID,
 	},
+	{
+		.compatible = "st,asm330lhhx",
+		.data = (void *)ST_ASM330LHHX_ID,
+	},
 	{},
 };
 MODULE_DEVICE_TABLE(of, st_lsm6dsx_i2c_of_match);
@@ -123,6 +126,7 @@ static const struct i2c_device_id st_lsm6dsx_i2c_id_table[] = {
 	{ ST_LSM6DSRX_DEV_NAME, ST_LSM6DSRX_ID },
 	{ ST_LSM6DST_DEV_NAME, ST_LSM6DST_ID },
 	{ ST_LSM6DSOP_DEV_NAME, ST_LSM6DSOP_ID },
+	{ ST_ASM330LHHX_DEV_NAME, ST_ASM330LHHX_ID },
 	{},
 };
 MODULE_DEVICE_TABLE(i2c, st_lsm6dsx_i2c_id_table);

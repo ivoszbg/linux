@@ -335,7 +335,7 @@
 					<9 0 &gic GIC_SPI 149 IRQ_TYPE_LEVEL_HIGH>,
 					<10 0 &gic GIC_SPI 150 IRQ_TYPE_LEVEL_HIGH>,
 					<11 0 &gic GIC_SPI 151 IRQ_TYPE_LEVEL_HIGH>;
-				interrupt-map-mask = <0xffffffff 0x0>;
+				interrupt-map-mask = <0xf 0x0>;
 			};
 		};
 
@@ -348,6 +348,7 @@
 			ranges = <0x0 0x00 0x1700000 0x100000>;
 			reg = <0x00 0x1700000 0x0 0x100000>;
 			interrupts = <0 75 0x4>;
+			dma-coherent;
 
 			sec_jr0: jr@10000 {
 				compatible = "fsl,sec-v5.4-job-ring",
@@ -388,8 +389,8 @@
 			big-endian;
 		};
 
-		ifc: ifc@1530000 {
-			compatible = "fsl,ifc", "simple-bus";
+		ifc: memory-controller@1530000 {
+			compatible = "fsl,ifc";
 			reg = <0x0 0x1530000 0x0 0x10000>;
 			interrupts = <0 43 0x4>;
 		};
@@ -535,9 +536,9 @@
 			clock-names = "i2c";
 			clocks = <&clockgen QORIQ_CLK_PLATFORM_PLL
 					    QORIQ_CLK_PLL_DIV(1)>;
-			dmas = <&edma0 1 39>,
-			       <&edma0 1 38>;
-			dma-names = "tx", "rx";
+			dmas = <&edma0 1 38>,
+			       <&edma0 1 39>;
+			dma-names = "rx", "tx";
 			status = "disabled";
 		};
 
@@ -868,8 +869,8 @@
 
 		pcie1: pcie@3400000 {
 			compatible = "fsl,ls1043a-pcie";
-			reg = <0x00 0x03400000 0x0 0x00100000   /* controller registers */
-			       0x40 0x00000000 0x0 0x00002000>; /* configuration space */
+			reg = <0x00 0x03400000 0x0 0x00100000>, /* controller registers */
+			      <0x40 0x00000000 0x0 0x00002000>; /* configuration space */
 			reg-names = "regs", "config";
 			interrupts = <0 118 0x4>, /* controller interrupt */
 				     <0 117 0x4>; /* PME interrupt */
@@ -894,8 +895,8 @@
 
 		pcie2: pcie@3500000 {
 			compatible = "fsl,ls1043a-pcie";
-			reg = <0x00 0x03500000 0x0 0x00100000   /* controller registers */
-			       0x48 0x00000000 0x0 0x00002000>; /* configuration space */
+			reg = <0x00 0x03500000 0x0 0x00100000>, /* controller registers */
+			      <0x48 0x00000000 0x0 0x00002000>; /* configuration space */
 			reg-names = "regs", "config";
 			interrupts = <0 128 0x4>,
 				     <0 127 0x4>;
@@ -920,8 +921,8 @@
 
 		pcie3: pcie@3600000 {
 			compatible = "fsl,ls1043a-pcie";
-			reg = <0x00 0x03600000 0x0 0x00100000   /* controller registers */
-			       0x50 0x00000000 0x0 0x00002000>; /* configuration space */
+			reg = <0x00 0x03600000 0x0 0x00100000>, /* controller registers */
+			      <0x50 0x00000000 0x0 0x00002000>; /* configuration space */
 			reg-names = "regs", "config";
 			interrupts = <0 162 0x4>,
 				     <0 161 0x4>;

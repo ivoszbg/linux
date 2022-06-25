@@ -2106,7 +2106,7 @@ static int wm8996_set_fll(struct snd_soc_component *component, int fll_id, int s
 		timeout *= 10;
 	else
 		/* ensure timeout of atleast 1 jiffies */
-		timeout = timeout/2 ? : 1;
+		timeout = (timeout/2) ? : 1;
 
 	for (retry = 0; retry < 10; retry++) {
 		time_left = wait_for_completion_timeout(&wm8996->fll_lock,
@@ -2755,8 +2755,7 @@ static struct snd_soc_dai_driver wm8996_dai[] = {
 	},
 };
 
-static int wm8996_i2c_probe(struct i2c_client *i2c,
-			    const struct i2c_device_id *id)
+static int wm8996_i2c_probe(struct i2c_client *i2c)
 {
 	struct wm8996_priv *wm8996;
 	int ret, i;
@@ -3091,7 +3090,7 @@ static struct i2c_driver wm8996_i2c_driver = {
 	.driver = {
 		.name = "wm8996",
 	},
-	.probe =    wm8996_i2c_probe,
+	.probe_new = wm8996_i2c_probe,
 	.remove =   wm8996_i2c_remove,
 	.id_table = wm8996_i2c_id,
 };

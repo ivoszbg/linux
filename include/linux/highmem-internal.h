@@ -73,6 +73,12 @@ static inline void *kmap_local_page(struct page *page)
 	return __kmap_local_page_prot(page, kmap_prot);
 }
 
+static inline void *kmap_local_folio(struct folio *folio, size_t offset)
+{
+	struct page *page = folio_page(folio, offset / PAGE_SIZE);
+	return __kmap_local_page_prot(page, kmap_prot) + offset % PAGE_SIZE;
+}
+
 static inline void *kmap_local_page_prot(struct page *page, pgprot_t prot)
 {
 	return __kmap_local_page_prot(page, prot);
@@ -90,7 +96,11 @@ static inline void __kunmap_local(void *vaddr)
 
 static inline void *kmap_atomic_prot(struct page *page, pgprot_t prot)
 {
-	preempt_disable();
+	if (IS_ENABLED(CONFIG_PREEMPT_RT))
+		migrate_disable();
+	else
+		preempt_disable();
+
 	pagefault_disable();
 	return __kmap_local_page_prot(page, prot);
 }
@@ -102,7 +112,11 @@ static inline void *kmap_atomic(struct page *page)
 
 static inline void *kmap_atomic_pfn(unsigned long pfn)
 {
-	preempt_disable();
+	if (IS_ENABLED(CONFIG_PREEMPT_RT))
+		migrate_disable();
+	else
+		preempt_disable();
+
 	pagefault_disable();
 	return __kmap_local_pfn_prot(pfn, kmap_prot);
 }
@@ -111,7 +125,10 @@ static inline void __kunmap_atomic(void *addr)
 {
 	kunmap_local_indexed(addr);
 	pagefault_enable();
-	preempt_enable();
+	if (IS_ENABLED(CONFIG_PREEMPT_RT))
+		migrate_enable();
+	else
+		preempt_enable();
 }
 
 unsigned int __nr_free_highpages(void);
@@ -132,6 +149,11 @@ static inline void totalhigh_pages_add(long count)
 	atomic_long_add(count, &_totalhigh_pages);
 }
 
+static inline bool is_kmap_addr(const void *x)
+{
+	unsigned long addr = (unsigned long)x;
+	return addr >= PKMAP_ADDR(0) && addr < PKMAP_ADDR(LAST_PKMAP);
+}
 #else /* CONFIG_HIGHMEM */
 
 static inline struct page *kmap_to_page(void *addr)
@@ -160,6 +182,11 @@ static inline void *kmap_local_page(struct page *page)
 	return page_address(page);
 }
 
+static inline void *kmap_local_folio(struct folio *folio, size_t offset)
+{
+	return page_address(&folio->page) + offset;
+}
+
 static inline void *kmap_local_page_prot(struct page *page, pgprot_t prot)
 {
 	return kmap_local_page(page);
@@ -179,7 +206,10 @@ static inline void __kunmap_local(void *addr)
 
 static inline void *kmap_atomic(struct page *page)
 {
-	preempt_disable();
+	if (IS_ENABLED(CONFIG_PREEMPT_RT))
+		migrate_disable();
+	else
+		preempt_disable();
 	pagefault_disable();
 	return page_address(page);
 }
@@ -200,17 +230,37 @@ static inline void __kunmap_atomic(void *addr)
 	kunmap_flush_on_unmap(addr);
 #endif
 	pagefault_enable();
-	preempt_enable();
+	if (IS_ENABLED(CONFIG_PREEMPT_RT))
+		migrate_enable();
+	else
+		preempt_enable();
 }
 
 static inline unsigned int nr_free_highpages(void) { return 0; }
 static inline unsigned long totalhigh_pages(void) { return 0UL; }
 
+static inline bool is_kmap_addr(const void *x)
+{
+	return false;
+}
+
 #endif /* CONFIG_HIGHMEM */
 
-/*
- * Prevent people trying to call kunmap_atomic() as if it were kunmap()
- * kunmap_atomic() should get the return value of kmap_atomic, not the page.
+/**
+ * kunmap_atomic - Unmap the virtual address mapped by kmap_atomic() - deprecated!
+ * @__addr:       Virtual address to be unmapped
+ *
+ * Unmaps an address previously mapped by kmap_atomic() and re-enables
+ * pagefaults. Depending on PREEMP_RT configuration, re-enables also
+ * migration and preemption. Users should not count on these side effects.
+ *
+ * Mappings should be unmapped in the reverse order that they were mapped.
+ * See kmap_local_page() for details on nesting.
+ *
+ * @__addr can be any address within the mapped page, so there is no need
+ * to subtract any offset that has been added. In contrast to kunmap(),
+ * this function takes the address returned from kmap_atomic(), not the
+ * page passed to it. The compiler will warn you if you pass the page.
  */
 #define kunmap_atomic(__addr)					\
 do {								\
@@ -218,6 +268,16 @@ do {								\
 	__kunmap_atomic(__addr);				\
 } while (0)
 
+/**
+ * kunmap_local - Unmap a page mapped via kmap_local_page().
+ * @__addr: An address within the page mapped
+ *
+ * @__addr can be any address within the mapped page.  Commonly it is the
+ * address return from kmap_local_page(), but it can also include offsets.
+ *
+ * Unmapping should be done in the reverse order of the mapping.  See
+ * kmap_local_page() for details.
+ */
 #define kunmap_local(__addr)					\
 do {								\
 	BUILD_BUG_ON(__same_type((__addr), struct page *));	\

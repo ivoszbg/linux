@@ -9,7 +9,7 @@
  * Copyright 2007, Michael Wu <flamingice@sourmilk.net>
  * Copyright 2007-2010, Intel Corporation
  * Copyright 2017	Intel Deutschland GmbH
- * Copyright(c) 2020 Intel Corporation
+ * Copyright(c) 2020-2021 Intel Corporation
  */
 
 #include <linux/ieee80211.h>
@@ -243,9 +243,9 @@ bool ieee80211_ht_cap_ie_to_sta_ht_cap(struct ieee80211_sub_if_data *sdata,
 		sta->sta.max_amsdu_len = IEEE80211_MAX_MPDU_LEN_HT_3839;
 
  apply:
-	changed = memcmp(&sta->sta.ht_cap, &ht_cap, sizeof(ht_cap));
+	changed = memcmp(&sta->sta.deflink.ht_cap, &ht_cap, sizeof(ht_cap));
 
-	memcpy(&sta->sta.ht_cap, &ht_cap, sizeof(ht_cap));
+	memcpy(&sta->sta.deflink.ht_cap, &ht_cap, sizeof(ht_cap));
 
 	switch (sdata->vif.bss_conf.chandef.width) {
 	default:
@@ -264,9 +264,9 @@ bool ieee80211_ht_cap_ie_to_sta_ht_cap(struct ieee80211_sub_if_data *sdata,
 		break;
 	}
 
-	sta->sta.bandwidth = bw;
+	sta->sta.deflink.bandwidth = bw;
 
-	sta->cur_max_bandwidth =
+	sta->deflink.cur_max_bandwidth =
 		ht_cap.cap & IEEE80211_HT_CAP_SUP_WIDTH_20_40 ?
 				IEEE80211_STA_RX_BW_40 : IEEE80211_STA_RX_BW_20;
 
@@ -555,17 +555,15 @@ void ieee80211_request_smps(struct ieee80211_vif *vif,
 {
 	struct ieee80211_sub_if_data *sdata = vif_to_sdata(vif);
 
-	if (WARN_ON_ONCE(vif->type != NL80211_IFTYPE_STATION &&
-			 vif->type != NL80211_IFTYPE_AP))
+	if (WARN_ON_ONCE(vif->type != NL80211_IFTYPE_STATION))
 		return;
 
-	if (vif->type == NL80211_IFTYPE_STATION) {
-		if (sdata->u.mgd.driver_smps_mode == smps_mode)
-			return;
-		sdata->u.mgd.driver_smps_mode = smps_mode;
-		ieee80211_queue_work(&sdata->local->hw,
-				     &sdata->u.mgd.request_smps_work);
-	}
+	if (sdata->u.mgd.driver_smps_mode == smps_mode)
+		return;
+
+	sdata->u.mgd.driver_smps_mode = smps_mode;
+	ieee80211_queue_work(&sdata->local->hw,
+			     &sdata->u.mgd.request_smps_work);
 }
 /* this might change ... don't want non-open drivers using it */
 EXPORT_SYMBOL_GPL(ieee80211_request_smps);

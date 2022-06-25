@@ -132,7 +132,7 @@ struct ep93xx_dma_desc {
 /**
  * struct ep93xx_dma_chan - an EP93xx DMA M2P/M2M channel
  * @chan: dmaengine API channel
- * @edma: pointer to to the engine device
+ * @edma: pointer to the engine device
  * @regs: memory mapped registers
  * @irq: interrupt number of the channel
  * @clk: clock used by this channel
@@ -897,7 +897,7 @@ static int ep93xx_dma_alloc_chan_resources(struct dma_chan *chan)
 	if (data && data->name)
 		name = data->name;
 
-	ret = clk_enable(edmac->clk);
+	ret = clk_prepare_enable(edmac->clk);
 	if (ret)
 		return ret;
 
@@ -936,7 +936,7 @@ static int ep93xx_dma_alloc_chan_resources(struct dma_chan *chan)
 fail_free_irq:
 	free_irq(edmac->irq, edmac);
 fail_clk_disable:
-	clk_disable(edmac->clk);
+	clk_disable_unprepare(edmac->clk);
 
 	return ret;
 }
@@ -969,7 +969,7 @@ static void ep93xx_dma_free_chan_resources(struct dma_chan *chan)
 	list_for_each_entry_safe(desc, d, &list, node)
 		kfree(desc);
 
-	clk_disable(edmac->clk);
+	clk_disable_unprepare(edmac->clk);
 	free_irq(edmac->irq, edmac);
 }
 

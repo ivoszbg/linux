@@ -724,7 +724,7 @@ static int wm8978_hw_params(struct snd_pcm_substream *substream,
 	/* Sampling rate mask = 0xe (for filters) */
 	u16 add_ctl = snd_soc_component_read(component, WM8978_ADDITIONAL_CONTROL) & ~0xe;
 	u16 clking = snd_soc_component_read(component, WM8978_CLOCKING);
-	enum wm8978_sysclk_src current_clk_id = clking & 0x100 ?
+	enum wm8978_sysclk_src current_clk_id = (clking & 0x100) ?
 		WM8978_PLL : WM8978_MCLK;
 	unsigned int f_sel, diff, diff_best = INT_MAX;
 	int i, best = 0;
@@ -1020,8 +1020,7 @@ static const struct regmap_config wm8978_regmap_config = {
 	.num_reg_defaults = ARRAY_SIZE(wm8978_reg_defaults),
 };
 
-static int wm8978_i2c_probe(struct i2c_client *i2c,
-			    const struct i2c_device_id *id)
+static int wm8978_i2c_probe(struct i2c_client *i2c)
 {
 	struct wm8978_priv *wm8978;
 	int ret;
@@ -1074,7 +1073,7 @@ static struct i2c_driver wm8978_i2c_driver = {
 		.name = "wm8978",
 		.of_match_table = wm8978_of_match,
 	},
-	.probe =    wm8978_i2c_probe,
+	.probe_new = wm8978_i2c_probe,
 	.id_table = wm8978_i2c_id,
 };
 

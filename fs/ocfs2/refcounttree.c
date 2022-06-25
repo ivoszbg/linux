@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-only
-/* -*- mode: c; c-basic-offset: 8; -*-
- * vim: noexpandtab sw=8 ts=8 sts=0:
- *
+/*
  * refcounttree.c
  *
  * Copyright (C) 2009 Oracle.  All rights reserved.
@@ -2963,12 +2961,14 @@ retry:
 		}
 
 		if (!PageUptodate(page)) {
-			ret = block_read_full_page(page, ocfs2_get_block);
+			struct folio *folio = page_folio(page);
+
+			ret = block_read_full_folio(folio, ocfs2_get_block);
 			if (ret) {
 				mlog_errno(ret);
 				goto unlock;
 			}
-			lock_page(page);
+			folio_lock(folio);
 		}
 
 		if (page_has_buffers(page)) {

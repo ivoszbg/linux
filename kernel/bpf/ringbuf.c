@@ -8,7 +8,9 @@
 #include <linux/vmalloc.h>
 #include <linux/wait.h>
 #include <linux/poll.h>
+#include <linux/kmemleak.h>
 #include <uapi/linux/btf.h>
+#include <linux/btf_ids.h>
 
 #define RINGBUF_CREATE_FLAG_MASK (BPF_F_NUMA_NODE)
 
@@ -103,8 +105,9 @@ static struct bpf_ringbuf *bpf_ringbuf_area_alloc(size_t data_sz, int numa_node)
 	}
 
 	rb = vmap(pages, nr_meta_pages + 2 * nr_data_pages,
-		  VM_ALLOC | VM_USERMAP, PAGE_KERNEL);
+		  VM_MAP | VM_USERMAP, PAGE_KERNEL);
 	if (rb) {
+		kmemleak_not_leak(pages);
 		rb->pages = pages;
 		rb->nr_pages = nr_pages;
 		return rb;
@@ -221,25 +224,20 @@ static int ringbuf_map_get_next_key(struct bpf_map *map, void *key,
 	return -ENOTSUPP;
 }
 
-static size_t bpf_ringbuf_mmap_page_cnt(const struct bpf_ringbuf *rb)
-{
-	size_t data_pages = (rb->mask + 1) >> PAGE_SHIFT;
-
-	/* consumer page + producer page + 2 x data pages */
-	return RINGBUF_POS_PAGES + 2 * data_pages;
-}
-
 static int ringbuf_map_mmap(struct bpf_map *map, struct vm_area_struct *vma)
 {
 	struct bpf_ringbuf_map *rb_map;
-	size_t mmap_sz;
 
 	rb_map = container_of(map, struct bpf_ringbuf_map, map);
-	mmap_sz = bpf_ringbuf_mmap_page_cnt(rb_map->rb) << PAGE_SHIFT;
 
-	if (vma->vm_pgoff * PAGE_SIZE + (vma->vm_end - vma->vm_start) > mmap_sz)
-		return -EINVAL;
-
+	if (vma->vm_flags & VM_WRITE) {
+		/* allow writable mapping for the consumer_pos only */
+		if (vma->vm_pgoff != 0 || vma->vm_end - vma->vm_start != PAGE_SIZE)
+			return -EPERM;
+	} else {
+		vma->vm_flags &= ~VM_MAYWRITE;
+	}
+	/* remap_vmalloc_range() checks size and offset constraints */
 	return remap_vmalloc_range(vma, rb_map->rb,
 				   vma->vm_pgoff + RINGBUF_PGOFF);
 }
@@ -266,7 +264,7 @@ static __poll_t ringbuf_map_poll(struct bpf_map *map, struct file *filp,
 	return 0;
 }
 
-static int ringbuf_map_btf_id;
+BTF_ID_LIST_SINGLE(ringbuf_map_btf_ids, struct, bpf_ringbuf_map)
 const struct bpf_map_ops ringbuf_map_ops = {
 	.map_meta_equal = bpf_map_meta_equal,
 	.map_alloc = ringbuf_map_alloc,
@@ -277,8 +275,7 @@ const struct bpf_map_ops ringbuf_map_ops = {
 	.map_update_elem = ringbuf_map_update_elem,
 	.map_delete_elem = ringbuf_map_delete_elem,
 	.map_get_next_key = ringbuf_map_get_next_key,
-	.map_btf_name = "bpf_ringbuf_map",
-	.map_btf_id = &ringbuf_map_btf_id,
+	.map_btf_id = &ringbuf_map_btf_ids[0],
 };
 
 /* Given pointer to ring buffer record metadata and struct bpf_ringbuf itself,
@@ -315,6 +312,9 @@ static void *__bpf_ringbuf_reserve(struct bpf_ringbuf *rb, u64 size)
 		return NULL;
 
 	len = round_up(size + BPF_RINGBUF_HDR_SZ, 8);
+	if (len > rb->mask + 1)
+		return NULL;
+
 	cons_pos = smp_load_acquire(&rb->consumer_pos);
 
 	if (in_nmi()) {
@@ -404,7 +404,7 @@ BPF_CALL_2(bpf_ringbuf_submit, void *, sample, u64, flags)
 const struct bpf_func_proto bpf_ringbuf_submit_proto = {
 	.func		= bpf_ringbuf_submit,
 	.ret_type	= RET_VOID,
-	.arg1_type	= ARG_PTR_TO_ALLOC_MEM,
+	.arg1_type	= ARG_PTR_TO_ALLOC_MEM | OBJ_RELEASE,
 	.arg2_type	= ARG_ANYTHING,
 };
 
@@ -417,7 +417,7 @@ BPF_CALL_2(bpf_ringbuf_discard, void *, sample, u64, flags)
 const struct bpf_func_proto bpf_ringbuf_discard_proto = {
 	.func		= bpf_ringbuf_discard,
 	.ret_type	= RET_VOID,
-	.arg1_type	= ARG_PTR_TO_ALLOC_MEM,
+	.arg1_type	= ARG_PTR_TO_ALLOC_MEM | OBJ_RELEASE,
 	.arg2_type	= ARG_ANYTHING,
 };
 
@@ -444,7 +444,7 @@ const struct bpf_func_proto bpf_ringbuf_output_proto = {
 	.func		= bpf_ringbuf_output,
 	.ret_type	= RET_INTEGER,
 	.arg1_type	= ARG_CONST_MAP_PTR,
-	.arg2_type	= ARG_PTR_TO_MEM,
+	.arg2_type	= ARG_PTR_TO_MEM | MEM_RDONLY,
 	.arg3_type	= ARG_CONST_SIZE_OR_ZERO,
 	.arg4_type	= ARG_ANYTHING,
 };
@@ -473,5 +473,83 @@ const struct bpf_func_proto bpf_ringbuf_query_proto = {
 	.func		= bpf_ringbuf_query,
 	.ret_type	= RET_INTEGER,
 	.arg1_type	= ARG_CONST_MAP_PTR,
+	.arg2_type	= ARG_ANYTHING,
+};
+
+BPF_CALL_4(bpf_ringbuf_reserve_dynptr, struct bpf_map *, map, u32, size, u64, flags,
+	   struct bpf_dynptr_kern *, ptr)
+{
+	struct bpf_ringbuf_map *rb_map;
+	void *sample;
+	int err;
+
+	if (unlikely(flags)) {
+		bpf_dynptr_set_null(ptr);
+		return -EINVAL;
+	}
+
+	err = bpf_dynptr_check_size(size);
+	if (err) {
+		bpf_dynptr_set_null(ptr);
+		return err;
+	}
+
+	rb_map = container_of(map, struct bpf_ringbuf_map, map);
+
+	sample = __bpf_ringbuf_reserve(rb_map->rb, size);
+	if (!sample) {
+		bpf_dynptr_set_null(ptr);
+		return -EINVAL;
+	}
+
+	bpf_dynptr_init(ptr, sample, BPF_DYNPTR_TYPE_RINGBUF, 0, size);
+
+	return 0;
+}
+
+const struct bpf_func_proto bpf_ringbuf_reserve_dynptr_proto = {
+	.func		= bpf_ringbuf_reserve_dynptr,
+	.ret_type	= RET_INTEGER,
+	.arg1_type	= ARG_CONST_MAP_PTR,
+	.arg2_type	= ARG_ANYTHING,
+	.arg3_type	= ARG_ANYTHING,
+	.arg4_type	= ARG_PTR_TO_DYNPTR | DYNPTR_TYPE_RINGBUF | MEM_UNINIT,
+};
+
+BPF_CALL_2(bpf_ringbuf_submit_dynptr, struct bpf_dynptr_kern *, ptr, u64, flags)
+{
+	if (!ptr->data)
+		return 0;
+
+	bpf_ringbuf_commit(ptr->data, flags, false /* discard */);
+
+	bpf_dynptr_set_null(ptr);
+
+	return 0;
+}
+
+const struct bpf_func_proto bpf_ringbuf_submit_dynptr_proto = {
+	.func		= bpf_ringbuf_submit_dynptr,
+	.ret_type	= RET_VOID,
+	.arg1_type	= ARG_PTR_TO_DYNPTR | DYNPTR_TYPE_RINGBUF | OBJ_RELEASE,
+	.arg2_type	= ARG_ANYTHING,
+};
+
+BPF_CALL_2(bpf_ringbuf_discard_dynptr, struct bpf_dynptr_kern *, ptr, u64, flags)
+{
+	if (!ptr->data)
+		return 0;
+
+	bpf_ringbuf_commit(ptr->data, flags, true /* discard */);
+
+	bpf_dynptr_set_null(ptr);
+
+	return 0;
+}
+
+const struct bpf_func_proto bpf_ringbuf_discard_dynptr_proto = {
+	.func		= bpf_ringbuf_discard_dynptr,
+	.ret_type	= RET_VOID,
+	.arg1_type	= ARG_PTR_TO_DYNPTR | DYNPTR_TYPE_RINGBUF | OBJ_RELEASE,
 	.arg2_type	= ARG_ANYTHING,
 };

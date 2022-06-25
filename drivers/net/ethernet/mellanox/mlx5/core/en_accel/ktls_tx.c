@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0 OR Linux-OpenIB
 // Copyright (c) 2019 Mellanox Technologies.
 
+#include "en_accel/ktls.h"
 #include "en_accel/ktls_txrx.h"
 #include "en_accel/ktls_utils.h"
 
@@ -22,15 +23,18 @@ mlx5e_ktls_dumps_num_wqes(struct mlx5e_params *params, unsigned int nfrags,
 	return nfrags + DIV_ROUND_UP(sync_len, MLX5E_SW2HW_MTU(params, params->sw_mtu));
 }
 
-u16 mlx5e_ktls_get_stop_room(struct mlx5e_params *params)
+u16 mlx5e_ktls_get_stop_room(struct mlx5_core_dev *mdev, struct mlx5e_params *params)
 {
 	u16 num_dumps, stop_room = 0;
 
+	if (!mlx5e_is_ktls_tx(mdev))
+		return 0;
+
 	num_dumps = mlx5e_ktls_dumps_num_wqes(params, MAX_SKB_FRAGS, TLS_MAX_PAYLOAD_SIZE);
 
-	stop_room += mlx5e_stop_room_for_wqe(MLX5E_TLS_SET_STATIC_PARAMS_WQEBBS);
-	stop_room += mlx5e_stop_room_for_wqe(MLX5E_TLS_SET_PROGRESS_PARAMS_WQEBBS);
-	stop_room += num_dumps * mlx5e_stop_room_for_wqe(MLX5E_KTLS_DUMP_WQEBBS);
+	stop_room += mlx5e_stop_room_for_wqe(mdev, MLX5E_TLS_SET_STATIC_PARAMS_WQEBBS);
+	stop_room += mlx5e_stop_room_for_wqe(mdev, MLX5E_TLS_SET_PROGRESS_PARAMS_WQEBBS);
+	stop_room += num_dumps * mlx5e_stop_room_for_wqe(mdev, MLX5E_KTLS_DUMP_WQEBBS);
 
 	return stop_room;
 }
@@ -50,6 +54,7 @@ static int mlx5e_ktls_create_tis(struct mlx5_core_dev *mdev, u32 *tisn)
 struct mlx5e_ktls_offload_context_tx {
 	struct tls_offload_context_tx *tx_ctx;
 	struct tls12_crypto_info_aes_gcm_128 crypto_info;
+	struct mlx5e_tls_sw_stats *sw_stats;
 	u32 expected_seq;
 	u32 tisn;
 	u32 key_id;
@@ -99,6 +104,7 @@ int mlx5e_ktls_add_tx(struct net_device *netdev, struct sock *sk,
 	if (err)
 		goto err_create_key;
 
+	priv_tx->sw_stats = &priv->tls->sw_stats;
 	priv_tx->expected_seq = start_offload_tcp_sn;
 	priv_tx->crypto_info  =
 		*(struct tls12_crypto_info_aes_gcm_128 *)crypto_info;
@@ -111,6 +117,7 @@ int mlx5e_ktls_add_tx(struct net_device *netdev, struct sock *sk,
 		goto err_create_tis;
 
 	priv_tx->ctx_post_pending = true;
+	atomic64_inc(&priv_tx->sw_stats->tx_tls_ctx);
 
 	return 0;
 
@@ -131,6 +138,7 @@ void mlx5e_ktls_del_tx(struct net_device *netdev, struct tls_context *tls_ctx)
 	priv = netdev_priv(netdev);
 	mdev = priv->mdev;
 
+	atomic64_inc(&priv_tx->sw_stats->tx_tls_del);
 	mlx5e_destroy_tis(mdev, priv_tx->tisn);
 	mlx5_ktls_destroy_key(mdev, priv_tx->key_id);
 	kfree(priv_tx);
@@ -440,19 +448,30 @@ err_out:
 	return MLX5E_KTLS_SYNC_FAIL;
 }
 
-bool mlx5e_ktls_handle_tx_skb(struct tls_context *tls_ctx, struct mlx5e_txqsq *sq,
-			      struct sk_buff *skb, int datalen,
+bool mlx5e_ktls_handle_tx_skb(struct net_device *netdev, struct mlx5e_txqsq *sq,
+			      struct sk_buff *skb,
 			      struct mlx5e_accel_tx_tls_state *state)
 {
 	struct mlx5e_ktls_offload_context_tx *priv_tx;
 	struct mlx5e_sq_stats *stats = sq->stats;
+	struct tls_context *tls_ctx;
+	int datalen;
 	u32 seq;
+
+	datalen = skb->len - (skb_transport_offset(skb) + tcp_hdrlen(skb));
+	if (!datalen)
+		return true;
+
+	mlx5e_tx_mpwqe_ensure_complete(sq);
+
+	tls_ctx = tls_get_ctx(skb->sk);
+	if (WARN_ON_ONCE(tls_ctx->netdev != netdev))
+		goto err_out;
 
 	priv_tx = mlx5e_get_ktls_tx_priv_ctx(tls_ctx);
 
 	if (unlikely(mlx5e_ktls_tx_offload_test_and_clear_pending(priv_tx))) {
 		mlx5e_ktls_tx_post_param_wqes(sq, priv_tx, false, false);
-		stats->tls_ctx++;
 	}
 
 	seq = ntohl(tcp_hdr(skb)->seq);

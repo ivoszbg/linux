@@ -45,6 +45,7 @@
 #include <sys/resource.h>		/* getrlimit */
 #include <ftw.h>
 #include <sys/stat.h>
+#include <linux/compiler.h>
 #include <linux/list.h>
 #include "jsmn.h"
 #include "json.h"
@@ -70,7 +71,7 @@ struct json_event {
 	char *metric_constraint;
 };
 
-enum aggr_mode_class convert(const char *aggr_mode)
+static enum aggr_mode_class convert(const char *aggr_mode)
 {
 	if (!strcmp(aggr_mode, "PerCore"))
 		return PerCore;
@@ -80,8 +81,6 @@ enum aggr_mode_class convert(const char *aggr_mode)
 	pr_err("%s: Wrong AggregationMode value '%s'\n", prog, aggr_mode);
 	return -1;
 }
-
-typedef int (*func)(void *data, struct json_event *je);
 
 static LIST_HEAD(sys_event_tables);
 
@@ -208,21 +207,6 @@ static struct msrmap {
 	{ NULL, NULL }
 };
 
-static struct field {
-	const char *field;
-	const char *kernel;
-} fields[] = {
-	{ "UMask",	"umask=" },
-	{ "CounterMask", "cmask=" },
-	{ "Invert",	"inv=" },
-	{ "AnyThread",	"any=" },
-	{ "EdgeDetect",	"edge=" },
-	{ "SampleAfterValue", "period=" },
-	{ "FCMask",	"fc_mask=" },
-	{ "PortMask",	"ch_mask=" },
-	{ NULL, NULL }
-};
-
 static void cut_comma(char *map, jsmntok_t *newval)
 {
 	int i;
@@ -232,21 +216,6 @@ static void cut_comma(char *map, jsmntok_t *newval)
 		if (map[i] == ',')
 			newval->end = i;
 	}
-}
-
-static int match_field(char *map, jsmntok_t *field, int nz,
-		       char **event, jsmntok_t *val)
-{
-	struct field *f;
-	jsmntok_t newval = *val;
-
-	for (f = fields; f->field; f++)
-		if (json_streq(map, field, f->field) && nz) {
-			cut_comma(map, &newval);
-			addfield(map, event, ",", f->kernel, &newval);
-			return 1;
-		}
-	return 0;
 }
 
 static struct msrmap *lookup_msr(char *map, jsmntok_t *val)
@@ -278,6 +247,7 @@ static struct map {
 	{ "CPU-M-CF", "cpum_cf" },
 	{ "CPU-M-SF", "cpum_sf" },
 	{ "UPI LL", "uncore_upi" },
+	{ "hisi_sicl,cpa", "hisi_sicl,cpa"},
 	{ "hisi_sccl,ddrc", "hisi_sccl,ddrc" },
 	{ "hisi_sccl,hha", "hisi_sccl,hha" },
 	{ "hisi_sccl,l3c", "hisi_sccl,l3c" },
@@ -285,6 +255,8 @@ static struct map {
 	{ "imx8_ddr", "imx8_ddr" },
 	{ "L3PMC", "amd_l3" },
 	{ "DFPMC", "amd_df" },
+	{ "cpu_core", "cpu_core" },
+	{ "cpu_atom", "cpu_atom" },
 	{}
 };
 
@@ -359,7 +331,7 @@ static int close_table;
 
 static void print_events_table_prefix(FILE *fp, const char *tblname)
 {
-	fprintf(fp, "struct pmu_event %s[] = {\n", tblname);
+	fprintf(fp, "static const struct pmu_event %s[] = {\n", tblname);
 	close_table = 1;
 }
 
@@ -367,7 +339,7 @@ static int print_events_table_entry(void *data, struct json_event *je)
 {
 	struct perf_entry_data *pd = data;
 	FILE *outfp = pd->outfp;
-	char *topic = pd->topic;
+	char *topic_local = pd->topic;
 
 	/*
 	 * TODO: Remove formatting chars after debugging to reduce
@@ -382,7 +354,7 @@ static int print_events_table_entry(void *data, struct json_event *je)
 	fprintf(outfp, "\t.desc = \"%s\",\n", je->desc);
 	if (je->compat)
 		fprintf(outfp, "\t.compat = \"%s\",\n", je->compat);
-	fprintf(outfp, "\t.topic = \"%s\",\n", topic);
+	fprintf(outfp, "\t.topic = \"%s\",\n", topic_local);
 	if (je->long_desc && je->long_desc[0])
 		fprintf(outfp, "\t.long_desc = \"%s\",\n", je->long_desc);
 	if (je->pmu)
@@ -468,7 +440,7 @@ static void free_arch_std_events(void)
 	}
 }
 
-static int save_arch_std_events(void *data, struct json_event *je)
+static int save_arch_std_events(void *data __maybe_unused, struct json_event *je)
 {
 	struct event_struct *es;
 
@@ -573,10 +545,20 @@ static int json_events(const char *fn,
 		struct json_event je = {};
 		char *arch_std = NULL;
 		unsigned long long eventcode = 0;
+		unsigned long long configcode = 0;
 		struct msrmap *msr = NULL;
 		jsmntok_t *msrval = NULL;
 		jsmntok_t *precise = NULL;
 		jsmntok_t *obj = tok++;
+		bool configcode_present = false;
+		char *umask = NULL;
+		char *cmask = NULL;
+		char *inv = NULL;
+		char *any = NULL;
+		char *edge = NULL;
+		char *period = NULL;
+		char *fc_mask = NULL;
+		char *ch_mask = NULL;
 
 		EXPECT(obj->type == JSMN_OBJECT, obj, "expected object");
 		for (j = 0; j < obj->size; j += 2) {
@@ -592,17 +574,38 @@ static int json_events(const char *fn,
 			       "Expected string value");
 
 			nz = !json_streq(map, val, "0");
-			if (match_field(map, field, nz, &event, val)) {
-				/* ok */
+			/* match_field */
+			if (json_streq(map, field, "UMask") && nz) {
+				addfield(map, &umask, "", "umask=", val);
+			} else if (json_streq(map, field, "CounterMask") && nz) {
+				addfield(map, &cmask, "", "cmask=", val);
+			} else if (json_streq(map, field, "Invert") && nz) {
+				addfield(map, &inv, "", "inv=", val);
+			} else if (json_streq(map, field, "AnyThread") && nz) {
+				addfield(map, &any, "", "any=", val);
+			} else if (json_streq(map, field, "EdgeDetect") && nz) {
+				addfield(map, &edge, "", "edge=", val);
+			} else if (json_streq(map, field, "SampleAfterValue") && nz) {
+				addfield(map, &period, "", "period=", val);
+			} else if (json_streq(map, field, "FCMask") && nz) {
+				addfield(map, &fc_mask, "", "fc_mask=", val);
+			} else if (json_streq(map, field, "PortMask") && nz) {
+				addfield(map, &ch_mask, "", "ch_mask=", val);
 			} else if (json_streq(map, field, "EventCode")) {
 				char *code = NULL;
 				addfield(map, &code, "", "", val);
 				eventcode |= strtoul(code, NULL, 0);
 				free(code);
+			} else if (json_streq(map, field, "ConfigCode")) {
+				char *code = NULL;
+				addfield(map, &code, "", "", val);
+				configcode |= strtoul(code, NULL, 0);
+				free(code);
+				configcode_present = true;
 			} else if (json_streq(map, field, "ExtSel")) {
 				char *code = NULL;
 				addfield(map, &code, "", "", val);
-				eventcode |= strtoul(code, NULL, 0) << 21;
+				eventcode |= strtoul(code, NULL, 0) << 8;
 				free(code);
 			} else if (json_streq(map, field, "EventName")) {
 				addfield(map, &je.name, "", "", val);
@@ -642,9 +645,6 @@ static int json_events(const char *fn,
 					for (s = je.pmu; *s; s++)
 						*s = tolower(*s);
 				}
-				addfield(map, &je.desc, ". ", "Unit: ", NULL);
-				addfield(map, &je.desc, "", je.pmu, NULL);
-				addfield(map, &je.desc, "", " ", NULL);
 			} else if (json_streq(map, field, "Filter")) {
 				addfield(map, &filter, "", "", val);
 			} else if (json_streq(map, field, "ScaleUnit")) {
@@ -663,8 +663,6 @@ static int json_events(const char *fn,
 				addfield(map, &je.metric_constraint, "", "", val);
 			} else if (json_streq(map, field, "MetricExpr")) {
 				addfield(map, &je.metric_expr, "", "", val);
-				for (s = je.metric_expr; *s; s++)
-					*s = tolower(*s);
 			} else if (json_streq(map, field, "ArchStdEvent")) {
 				addfield(map, &arch_std, "", "", val);
 				for (s = arch_std; *s; s++)
@@ -680,12 +678,37 @@ static int json_events(const char *fn,
 				addfield(map, &extra_desc, " ",
 						"(Precise event)", NULL);
 		}
-		snprintf(buf, sizeof buf, "event=%#llx", eventcode);
+		if (configcode_present)
+			snprintf(buf, sizeof buf, "config=%#llx", configcode);
+		else
+			snprintf(buf, sizeof buf, "event=%#llx", eventcode);
 		addfield(map, &event, ",", buf, NULL);
+		if (any)
+			addfield(map, &event, ",", any, NULL);
+		if (ch_mask)
+			addfield(map, &event, ",", ch_mask, NULL);
+		if (cmask)
+			addfield(map, &event, ",", cmask, NULL);
+		if (edge)
+			addfield(map, &event, ",", edge, NULL);
+		if (fc_mask)
+			addfield(map, &event, ",", fc_mask, NULL);
+		if (inv)
+			addfield(map, &event, ",", inv, NULL);
+		if (period)
+			addfield(map, &event, ",", period, NULL);
+		if (umask)
+			addfield(map, &event, ",", umask, NULL);
+
 		if (je.desc && extra_desc)
 			addfield(map, &je.desc, " ", extra_desc, NULL);
 		if (je.long_desc && extra_desc)
 			addfield(map, &je.long_desc, " ", extra_desc, NULL);
+		if (je.pmu) {
+			addfield(map, &je.desc, ". ", "Unit: ", NULL);
+			addfield(map, &je.desc, "", je.pmu, NULL);
+			addfield(map, &je.desc, "", " ", NULL);
+		}
 		if (filter)
 			addfield(map, &event, ",", filter, NULL);
 		if (msr != NULL)
@@ -705,6 +728,14 @@ static int json_events(const char *fn,
 		je.event = real_event(je.name, event);
 		err = func(data, &je);
 free_strings:
+		free(umask);
+		free(cmask);
+		free(inv);
+		free(any);
+		free(edge);
+		free(period);
+		free(fc_mask);
+		free(ch_mask);
 		free(event);
 		free(je.desc);
 		free(je.name);
@@ -784,7 +815,7 @@ static bool is_sys_dir(char *fname)
 
 static void print_mapping_table_prefix(FILE *outfp)
 {
-	fprintf(outfp, "struct pmu_events_map pmu_events_map[] = {\n");
+	fprintf(outfp, "const struct pmu_events_map pmu_events_map[] = {\n");
 }
 
 static void print_mapping_table_suffix(FILE *outfp)
@@ -812,13 +843,13 @@ static void print_mapping_test_table(FILE *outfp)
 	fprintf(outfp, "\t.cpuid = \"testcpu\",\n");
 	fprintf(outfp, "\t.version = \"v1\",\n");
 	fprintf(outfp, "\t.type = \"core\",\n");
-	fprintf(outfp, "\t.table = pme_test_cpu,\n");
+	fprintf(outfp, "\t.table = pme_test_soc_cpu,\n");
 	fprintf(outfp, "},\n");
 }
 
 static void print_system_event_mapping_table_prefix(FILE *outfp)
 {
-	fprintf(outfp, "\nstruct pmu_sys_events pmu_sys_event_tables[] = {");
+	fprintf(outfp, "\nconst struct pmu_sys_events pmu_sys_event_tables[] = {");
 }
 
 static void print_system_event_mapping_table_suffix(FILE *outfp)
@@ -834,7 +865,8 @@ static int process_system_event_tables(FILE *outfp)
 	print_system_event_mapping_table_prefix(outfp);
 
 	list_for_each_entry(sys_event_table, &sys_event_tables, list) {
-		fprintf(outfp, "\n\t{\n\t\t.table = %s,\n\t},",
+		fprintf(outfp, "\n\t{\n\t\t.table = %s,\n\t\t.name = \"%s\",\n\t},",
+			sys_event_table->soc_id,
 			sys_event_table->soc_id);
 	}
 
@@ -958,7 +990,7 @@ static int get_maxfds(void)
 	struct rlimit rlim;
 
 	if (getrlimit(RLIMIT_NOFILE, &rlim) == 0)
-		return min((int)rlim.rlim_max / 2, 512);
+		return min(rlim.rlim_max / 2, (rlim_t)512);
 
 	return 512;
 }
@@ -1121,8 +1153,10 @@ static int process_one_file(const char *fpath, const struct stat *sb,
 			mapfile = strdup(fpath);
 			return 0;
 		}
-
-		pr_info("%s: Ignoring file %s\n", prog, fpath);
+		if (is_json_file(bname))
+			pr_debug("%s: ArchStd json is preprocessed %s\n", prog, fpath);
+		else
+			pr_info("%s: Ignoring file %s\n", prog, fpath);
 		return 0;
 	}
 
@@ -1149,7 +1183,7 @@ static int process_one_file(const char *fpath, const struct stat *sb,
 	 * and directory tree could result in build failure due to table
 	 * names not being found.
 	 *
-	 * Atleast for now, be strict with processing JSON file names.
+	 * At least for now, be strict with processing JSON file names.
 	 * i.e. if JSON file name cannot be mapped to C-style table name,
 	 * fail.
 	 */
@@ -1191,7 +1225,7 @@ int main(int argc, char *argv[])
 	const char *arch;
 	const char *output_file;
 	const char *start_dirname;
-	char *err_string_ext = "";
+	const char *err_string_ext = "";
 	struct stat stbuf;
 
 	prog = basename(argv[0]);
@@ -1280,6 +1314,7 @@ int main(int argc, char *argv[])
 	}
 
 	free_arch_std_events();
+	free_sys_event_tables();
 	free(mapfile);
 	return 0;
 
@@ -1301,6 +1336,7 @@ err_close_eventsfp:
 		create_empty_mapping(output_file);
 err_out:
 	free_arch_std_events();
+	free_sys_event_tables();
 	free(mapfile);
 	return ret;
 }

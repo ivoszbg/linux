@@ -80,10 +80,12 @@ void __init time_early_init(void)
 {
 	struct ptff_qto qto;
 	struct ptff_qui qui;
+	int cs;
 
 	/* Initialize TOD steering parameters */
 	tod_steering_end = tod_clock_base.tod;
-	vdso_data->arch_data.tod_steering_end = tod_steering_end;
+	for (cs = 0; cs < CS_BASES; cs++)
+		vdso_data[cs].arch_data.tod_steering_end = tod_steering_end;
 
 	if (!test_facility(28))
 		return;
@@ -362,10 +364,11 @@ static inline int check_sync_clock(void)
  * Apply clock delta to the global data structures.
  * This is called once on the CPU that performed the clock sync.
  */
-static void clock_sync_global(unsigned long delta)
+static void clock_sync_global(long delta)
 {
 	unsigned long now, adj;
 	struct ptff_qto qto;
+	int cs;
 
 	/* Fixup the monotonic sched clock. */
 	tod_clock_base.eitod += delta;
@@ -381,7 +384,10 @@ static void clock_sync_global(unsigned long delta)
 		panic("TOD clock sync offset %li is too large to drift\n",
 		      tod_steering_delta);
 	tod_steering_end = now + (abs(tod_steering_delta) << 15);
-	vdso_data->arch_data.tod_steering_end = tod_steering_end;
+	for (cs = 0; cs < CS_BASES; cs++) {
+		vdso_data[cs].arch_data.tod_steering_end = tod_steering_end;
+		vdso_data[cs].arch_data.tod_steering_delta = tod_steering_delta;
+	}
 
 	/* Update LPAR offset. */
 	if (ptff_query(PTFF_QTO) && ptff(&qto, sizeof(qto), PTFF_QTO) == 0)
@@ -394,7 +400,7 @@ static void clock_sync_global(unsigned long delta)
  * Apply clock delta to the per-CPU data structures of this CPU.
  * This is called for each online CPU after the call to clock_sync_global.
  */
-static void clock_sync_local(unsigned long delta)
+static void clock_sync_local(long delta)
 {
 	/* Add the delta to the clock comparator. */
 	if (S390_lowcore.clock_comparator != clock_comparator_max) {
@@ -418,7 +424,7 @@ static void __init time_init_wq(void)
 struct clock_sync_data {
 	atomic_t cpus;
 	int in_sync;
-	unsigned long clock_delta;
+	long clock_delta;
 };
 
 /*
@@ -538,7 +544,7 @@ static int stpinfo_valid(void)
 static int stp_sync_clock(void *data)
 {
 	struct clock_sync_data *sync = data;
-	u64 clock_delta, flags;
+	long clock_delta, flags;
 	static int first;
 	int rc;
 
@@ -548,9 +554,7 @@ static int stp_sync_clock(void *data)
 		while (atomic_read(&sync->cpus) != 0)
 			cpu_relax();
 		rc = 0;
-		if (stp_info.todoff[0] || stp_info.todoff[1] ||
-		    stp_info.todoff[2] || stp_info.todoff[3] ||
-		    stp_info.tmd != 2) {
+		if (stp_info.todoff || stp_info.tmd != 2) {
 			flags = vdso_update_begin();
 			rc = chsc_sstpc(stp_page, STP_OP_SYNC, 0,
 					&clock_delta);

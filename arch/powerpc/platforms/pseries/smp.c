@@ -27,7 +27,6 @@
 #include <asm/irq.h>
 #include <asm/page.h>
 #include <asm/io.h>
-#include <asm/prom.h>
 #include <asm/smp.h>
 #include <asm/paca.h>
 #include <asm/machdep.h>
@@ -104,9 +103,6 @@ static inline int smp_startup_cpu(unsigned int lcpu)
 		cpumask_set_cpu(lcpu, of_spin_mask);
 		return 1;
 	}
-
-	/* Fixup atomic count: it exited inside IRQ handler. */
-	task_thread_info(paca_ptrs[lcpu]->__current)->preempt_count	= 0;
 
 	/* 
 	 * If the RTAS start-cpu token does not exist then presume the
@@ -211,7 +207,9 @@ static __init void pSeries_smp_probe(void)
 	if (!cpu_has_feature(CPU_FTR_SMT))
 		return;
 
-	if (check_kvm_guest()) {
+	check_kvm_guest();
+
+	if (is_kvm_guest()) {
 		/*
 		 * KVM emulates doorbells by disabling FSCR[MSGP] so msgsndp
 		 * faults to the hypervisor which then reads the instruction

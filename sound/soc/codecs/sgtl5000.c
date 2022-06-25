@@ -71,7 +71,7 @@ static const struct reg_default sgtl5000_reg_defaults[] = {
 	{ SGTL5000_DAP_EQ_BASS_BAND4,		0x002f },
 	{ SGTL5000_DAP_MAIN_CHAN,		0x8000 },
 	{ SGTL5000_DAP_MIX_CHAN,		0x0000 },
-	{ SGTL5000_DAP_AVC_CTRL,		0x0510 },
+	{ SGTL5000_DAP_AVC_CTRL,		0x5100 },
 	{ SGTL5000_DAP_AVC_THRESHOLD,		0x1473 },
 	{ SGTL5000_DAP_AVC_ATTACK,		0x0028 },
 	{ SGTL5000_DAP_AVC_DECAY,		0x0050 },
@@ -1579,8 +1579,7 @@ static void sgtl5000_fill_defaults(struct i2c_client *client)
 	}
 }
 
-static int sgtl5000_i2c_probe(struct i2c_client *client,
-			      const struct i2c_device_id *id)
+static int sgtl5000_i2c_probe(struct i2c_client *client)
 {
 	struct sgtl5000_priv *sgtl5000;
 	int ret, reg, rev;
@@ -1612,9 +1611,8 @@ static int sgtl5000_i2c_probe(struct i2c_client *client,
 		if (ret == -ENOENT)
 			ret = -EPROBE_DEFER;
 
-		if (ret != -EPROBE_DEFER)
-			dev_err(&client->dev, "Failed to get mclock: %d\n",
-				ret);
+		dev_err_probe(&client->dev, ret, "Failed to get mclock\n");
+
 		goto disable_regs;
 	}
 
@@ -1819,10 +1817,10 @@ MODULE_DEVICE_TABLE(of, sgtl5000_dt_ids);
 
 static struct i2c_driver sgtl5000_i2c_driver = {
 	.driver = {
-		   .name = "sgtl5000",
-		   .of_match_table = sgtl5000_dt_ids,
-		   },
-	.probe = sgtl5000_i2c_probe,
+		.name = "sgtl5000",
+		.of_match_table = sgtl5000_dt_ids,
+	},
+	.probe_new = sgtl5000_i2c_probe,
 	.remove = sgtl5000_i2c_remove,
 	.id_table = sgtl5000_id,
 };

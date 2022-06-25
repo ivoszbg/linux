@@ -8,6 +8,7 @@
 #include <linux/power_supply.h>
 #include <linux/types.h>
 #include <linux/usb/typec.h>
+#include <linux/usb/pd.h>
 #include <linux/usb/role.h>
 
 /* -------------------------------------------------------------------------- */
@@ -134,7 +135,9 @@ void ucsi_connector_change(struct ucsi *ucsi, u8 num);
 
 /* GET_PDOS command bits */
 #define UCSI_GET_PDOS_PARTNER_PDO(_r_)		((u64)(_r_) << 23)
+#define UCSI_GET_PDOS_PDO_OFFSET(_r_)		((u64)(_r_) << 24)
 #define UCSI_GET_PDOS_NUM_PDOS(_r_)		((u64)(_r_) << 32)
+#define UCSI_MAX_PDOS				(4)
 #define UCSI_GET_PDOS_SRC_PDOS			((u64)1 << 34)
 
 /* -------------------------------------------------------------------------- */
@@ -284,7 +287,11 @@ struct ucsi {
 	struct ucsi_capability cap;
 	struct ucsi_connector *connector;
 
-	struct work_struct work;
+	struct delayed_work work;
+	int work_count;
+#define UCSI_ROLE_SWITCH_RETRY_PER_HZ	10
+#define UCSI_ROLE_SWITCH_INTERVAL	(HZ / UCSI_ROLE_SWITCH_RETRY_PER_HZ)
+#define UCSI_ROLE_SWITCH_WAIT_COUNT	(10 * UCSI_ROLE_SWITCH_RETRY_PER_HZ)
 
 	/* PPM Communication lock */
 	struct mutex ppm_lock;
@@ -297,12 +304,10 @@ struct ucsi {
 #define EVENT_PENDING	0
 #define COMMAND_PENDING	1
 #define ACK_PENDING	2
-#define EVENT_PROCESSING	3
 };
 
 #define UCSI_MAX_SVID		5
 #define UCSI_MAX_ALTMODES	(UCSI_MAX_SVID * 6)
-#define UCSI_MAX_PDOS		(4)
 
 #define UCSI_TYPEC_VSAFE5V	5000
 #define UCSI_TYPEC_1_5_CURRENT	1500
@@ -315,6 +320,7 @@ struct ucsi_connector {
 	struct mutex lock; /* port lock */
 	struct work_struct work;
 	struct completion complete;
+	struct workqueue_struct *wq;
 
 	struct typec_port *port;
 	struct typec_partner *partner;
@@ -324,13 +330,12 @@ struct ucsi_connector {
 
 	struct typec_capability typec_cap;
 
-	u16 unprocessed_changes;
 	struct ucsi_connector_status status;
 	struct ucsi_connector_capability cap;
 	struct power_supply *psy;
 	struct power_supply_desc psy_desc;
 	u32 rdo;
-	u32 src_pdos[UCSI_MAX_PDOS];
+	u32 src_pdos[PDO_MAX_OBJECTS];
 	int num_pdos;
 
 	struct usb_role_switch *usb_role_sw;

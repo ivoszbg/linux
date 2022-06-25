@@ -5,6 +5,7 @@ socket
 psock_fanout
 psock_snd
 psock_tpacket
+stress_reuseport_listen
 reuseport_addr_any
 reuseport_bpf
 reuseport_bpf_cpu
@@ -30,3 +31,9 @@ hwtstamp_config
 rxtimestamp
 timestamping
 txtimestamp
+so_netns_cookie
+test_unix_oob
+gro
+ioam6_parser
+toeplitz
+cmsg_sender

@@ -88,10 +88,15 @@ static int reg_domain_disable(struct regulator_dev *rdev)
 {
 	struct fixed_voltage_data *priv = rdev_get_drvdata(rdev);
 	struct device *dev = rdev->dev.parent;
+	int ret;
+
+	ret = dev_pm_genpd_set_performance_state(dev, 0);
+	if (ret)
+		return ret;
 
 	priv->enable_counter--;
 
-	return dev_pm_genpd_set_performance_state(dev, 0);
+	return 0;
 }
 
 static int reg_is_enabled(struct regulator_dev *rdev)
@@ -231,11 +236,8 @@ static int reg_fixed_voltage_probe(struct platform_device *pdev)
 		drvdata->desc.supply_name = devm_kstrdup(&pdev->dev,
 					    config->input_supply,
 					    GFP_KERNEL);
-		if (!drvdata->desc.supply_name) {
-			dev_err(&pdev->dev,
-				"Failed to allocate input supply\n");
+		if (!drvdata->desc.supply_name)
 			return -ENOMEM;
-		}
 	}
 
 	if (config->microvolts)
@@ -271,7 +273,8 @@ static int reg_fixed_voltage_probe(struct platform_device *pdev)
 	 */
 	cfg.ena_gpiod = gpiod_get_optional(&pdev->dev, NULL, gflags);
 	if (IS_ERR(cfg.ena_gpiod))
-		return PTR_ERR(cfg.ena_gpiod);
+		return dev_err_probe(&pdev->dev, PTR_ERR(cfg.ena_gpiod),
+				     "can't get GPIO\n");
 
 	cfg.dev = &pdev->dev;
 	cfg.init_data = config->init_data;
@@ -281,8 +284,9 @@ static int reg_fixed_voltage_probe(struct platform_device *pdev)
 	drvdata->dev = devm_regulator_register(&pdev->dev, &drvdata->desc,
 					       &cfg);
 	if (IS_ERR(drvdata->dev)) {
-		ret = PTR_ERR(drvdata->dev);
-		dev_err(&pdev->dev, "Failed to register regulator: %d\n", ret);
+		ret = dev_err_probe(&pdev->dev, PTR_ERR(drvdata->dev),
+				    "Failed to register regulator: %ld\n",
+				    PTR_ERR(drvdata->dev));
 		return ret;
 	}
 

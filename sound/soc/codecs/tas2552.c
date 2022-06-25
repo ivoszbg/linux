@@ -681,8 +681,7 @@ static const struct regmap_config tas2552_regmap_config = {
 	.cache_type = REGCACHE_RBTREE,
 };
 
-static int tas2552_probe(struct i2c_client *client,
-			   const struct i2c_device_id *id)
+static int tas2552_probe(struct i2c_client *client)
 {
 	struct device *dev;
 	struct tas2552_data *data;
@@ -730,8 +729,10 @@ static int tas2552_probe(struct i2c_client *client,
 	ret = devm_snd_soc_register_component(&client->dev,
 				      &soc_component_dev_tas2552,
 				      tas2552_dai, ARRAY_SIZE(tas2552_dai));
-	if (ret < 0)
+	if (ret < 0) {
 		dev_err(&client->dev, "Failed to register component: %d\n", ret);
+		pm_runtime_get_noresume(&client->dev);
+	}
 
 	return ret;
 }
@@ -762,7 +763,7 @@ static struct i2c_driver tas2552_i2c_driver = {
 		.of_match_table = of_match_ptr(tas2552_of_match),
 		.pm = &tas2552_pm,
 	},
-	.probe = tas2552_probe,
+	.probe_new = tas2552_probe,
 	.remove = tas2552_i2c_remove,
 	.id_table = tas2552_id,
 };

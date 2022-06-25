@@ -104,7 +104,6 @@ MODULE_PARM_DESC(index, "Index value for cx25821 capture interface(s).");
 MODULE_DESCRIPTION("ALSA driver module for cx25821 based capture cards");
 MODULE_AUTHOR("Hiep Huynh");
 MODULE_LICENSE("GPL");
-MODULE_SUPPORTED_DEVICE("{{Conexant,25821}");	/* "{{Conexant,23881}," */
 
 static unsigned int debug;
 module_param(debug, int, 0644);
@@ -403,7 +402,7 @@ static int dsp_buffer_free(struct cx25821_audio_dev *chip)
 	dprintk(2, "Freeing buffer\n");
 	cx25821_alsa_dma_unmap(chip);
 	cx25821_alsa_dma_free(chip->buf);
-	pci_free_consistent(chip->pci, risc->size, risc->cpu, risc->dma);
+	dma_free_coherent(&chip->pci->dev, risc->size, risc->cpu, risc->dma);
 	kfree(chip->buf);
 
 	chip->buf = NULL;
@@ -729,8 +728,8 @@ static int cx25821_audio_initdev(struct cx25821_dev *dev)
 
 	chip->irq = dev->pci->irq;
 
-	err = request_irq(dev->pci->irq, cx25821_irq,
-			  IRQF_SHARED, chip->dev->name, chip);
+	err = devm_request_irq(&dev->pci->dev, dev->pci->irq, cx25821_irq,
+			       IRQF_SHARED, chip->dev->name, chip);
 
 	if (err < 0) {
 		pr_err("ERROR %s: can't get IRQ %d for ALSA\n", chip->dev->name,

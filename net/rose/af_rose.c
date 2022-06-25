@@ -109,7 +109,7 @@ char *rose2asc(char *buf, const rose_address *addr)
 /*
  *	Compare two ROSE addresses, 0 == equal.
  */
-int rosecmp(rose_address *addr1, rose_address *addr2)
+int rosecmp(const rose_address *addr1, const rose_address *addr2)
 {
 	int i;
 
@@ -123,7 +123,8 @@ int rosecmp(rose_address *addr1, rose_address *addr2)
 /*
  *	Compare two ROSE addresses for only mask digits, 0 == equal.
  */
-int rosecmpm(rose_address *addr1, rose_address *addr2, unsigned short mask)
+int rosecmpm(const rose_address *addr1, const rose_address *addr2,
+	     unsigned short mask)
 {
 	unsigned int i, j;
 
@@ -1229,7 +1230,8 @@ static int rose_recvmsg(struct socket *sock, struct msghdr *msg, size_t size,
 		return -ENOTCONN;
 
 	/* Now we can treat all alike */
-	if ((skb = skb_recv_datagram(sk, flags & ~MSG_DONTWAIT, flags & MSG_DONTWAIT, &er)) == NULL)
+	skb = skb_recv_datagram(sk, flags, &er);
+	if (!skb)
 		return er;
 
 	qbit = (skb->data[0] & ROSE_Q_BIT) == ROSE_Q_BIT;

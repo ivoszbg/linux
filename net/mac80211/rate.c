@@ -297,15 +297,11 @@ void ieee80211_check_rate_mask(struct ieee80211_sub_if_data *sdata)
 static bool rc_no_data_or_no_ack_use_min(struct ieee80211_tx_rate_control *txrc)
 {
 	struct sk_buff *skb = txrc->skb;
-	struct ieee80211_hdr *hdr = (struct ieee80211_hdr *) skb->data;
 	struct ieee80211_tx_info *info = IEEE80211_SKB_CB(skb);
-	__le16 fc;
-
-	fc = hdr->frame_control;
 
 	return (info->flags & (IEEE80211_TX_CTL_NO_ACK |
 			       IEEE80211_TX_CTL_USE_MINRATE)) ||
-		!ieee80211_is_data(fc);
+		!ieee80211_is_tx_data(skb);
 }
 
 static void rc_send_low_basicrate(struct ieee80211_tx_rate *rate,
@@ -375,7 +371,7 @@ static void __rate_control_send_low(struct ieee80211_hw *hw,
 	WARN_ONCE(i == sband->n_bitrates,
 		  "no supported rates for sta %pM (0x%x, band %d) in rate_mask 0x%x with flags 0x%x\n",
 		  sta ? sta->addr : NULL,
-		  sta ? sta->supp_rates[sband->band] : -1,
+		  sta ? sta->deflink.supp_rates[sband->band] : -1,
 		  sband->band,
 		  rate_mask, rate_flags);
 
@@ -785,11 +781,11 @@ static bool rate_control_cap_mask(struct ieee80211_sub_if_data *sdata,
 		u16 sta_vht_mask[NL80211_VHT_NSS_MAX];
 
 		/* Filter out rates that the STA does not support */
-		*mask &= sta->supp_rates[sband->band];
+		*mask &= sta->deflink.supp_rates[sband->band];
 		for (i = 0; i < IEEE80211_HT_MCS_MASK_LEN; i++)
-			mcs_mask[i] &= sta->ht_cap.mcs.rx_mask[i];
+			mcs_mask[i] &= sta->deflink.ht_cap.mcs.rx_mask[i];
 
-		sta_vht_cap = sta->vht_cap.vht_mcs.rx_mcs_map;
+		sta_vht_cap = sta->deflink.vht_cap.vht_mcs.rx_mcs_map;
 		ieee80211_get_vht_mask_from_cap(sta_vht_cap, sta_vht_mask);
 		for (i = 0; i < NL80211_VHT_NSS_MAX; i++)
 			vht_mask[i] &= sta_vht_mask[i];
@@ -870,7 +866,6 @@ void ieee80211_get_tx_rates(struct ieee80211_vif *vif,
 			    int max_rates)
 {
 	struct ieee80211_sub_if_data *sdata;
-	struct ieee80211_hdr *hdr = (struct ieee80211_hdr *) skb->data;
 	struct ieee80211_tx_info *info = IEEE80211_SKB_CB(skb);
 	struct ieee80211_supported_band *sband;
 
@@ -882,7 +877,7 @@ void ieee80211_get_tx_rates(struct ieee80211_vif *vif,
 	sdata = vif_to_sdata(vif);
 	sband = sdata->local->hw.wiphy->bands[info->band];
 
-	if (ieee80211_is_data(hdr->frame_control))
+	if (ieee80211_is_tx_data(skb))
 		rate_control_apply_mask(sdata, sta, sband, dest, max_rates);
 
 	if (dest[0].idx < 0)

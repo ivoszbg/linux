@@ -137,6 +137,7 @@
 #define DP83867_DOWNSHIFT_2_COUNT	2
 #define DP83867_DOWNSHIFT_4_COUNT	4
 #define DP83867_DOWNSHIFT_8_COUNT	8
+#define DP83867_SGMII_AUTONEG_EN	BIT(7)
 
 /* CFG3 bits */
 #define DP83867_CFG3_INT_OE			BIT(7)
@@ -182,7 +183,7 @@ static int dp83867_set_wol(struct phy_device *phydev,
 {
 	struct net_device *ndev = phydev->attached_dev;
 	u16 val_rxcfg, val_micr;
-	u8 *mac;
+	const u8 *mac;
 
 	val_rxcfg = phy_read_mmd(phydev, DP83867_DEVADDR, DP83867_RXFCFG);
 	val_micr = phy_read(phydev, MII_DP83867_MICR);
@@ -193,7 +194,7 @@ static int dp83867_set_wol(struct phy_device *phydev,
 		val_micr |= MII_DP83867_MICR_WOL_INT_EN;
 
 		if (wol->wolopts & WAKE_MAGIC) {
-			mac = (u8 *)ndev->dev_addr;
+			mac = (const u8 *)ndev->dev_addr;
 
 			if (!is_valid_ether_addr(mac))
 				return -EINVAL;
@@ -619,6 +620,25 @@ static int dp83867_of_init(struct phy_device *phydev)
 #else
 static int dp83867_of_init(struct phy_device *phydev)
 {
+	struct dp83867_private *dp83867 = phydev->priv;
+	u16 delay;
+
+	/* For non-OF device, the RX and TX ID values are either strapped
+	 * or take from default value. So, we init RX & TX ID values here
+	 * so that the RGMIIDCTL is configured correctly later in
+	 * dp83867_config_init();
+	 */
+	delay = phy_read_mmd(phydev, DP83867_DEVADDR, DP83867_RGMIIDCTL);
+	dp83867->rx_id_delay = delay & DP83867_RGMII_RX_CLK_DELAY_MAX;
+	dp83867->tx_id_delay = (delay >> DP83867_RGMII_TX_CLK_DELAY_SHIFT) &
+			       DP83867_RGMII_TX_CLK_DELAY_MAX;
+
+	/* Per datasheet, IO impedance is default to 50-ohm, so we set the
+	 * same here or else the default '0' means highest IO impedance
+	 * which is wrong.
+	 */
+	dp83867->io_impedance = DP83867_IO_MUX_CFG_IO_IMPEDANCE_MIN / 2;
+
 	return 0;
 }
 #endif /* CONFIG_OF_MDIO */
@@ -826,18 +846,40 @@ static int dp83867_phy_reset(struct phy_device *phydev)
 {
 	int err;
 
-	err = phy_write(phydev, DP83867_CTRL, DP83867_SW_RESET);
+	err = phy_write(phydev, DP83867_CTRL, DP83867_SW_RESTART);
 	if (err < 0)
 		return err;
 
 	usleep_range(10, 20);
 
-	/* After reset FORCE_LINK_GOOD bit is set. Although the
-	 * default value should be unset. Disable FORCE_LINK_GOOD
-	 * for the phy to work properly.
-	 */
 	return phy_modify(phydev, MII_DP83867_PHYCTRL,
 			 DP83867_PHYCR_FORCE_LINK_GOOD, 0);
+}
+
+static void dp83867_link_change_notify(struct phy_device *phydev)
+{
+	/* There is a limitation in DP83867 PHY device where SGMII AN is
+	 * only triggered once after the device is booted up. Even after the
+	 * PHY TPI is down and up again, SGMII AN is not triggered and
+	 * hence no new in-band message from PHY to MAC side SGMII.
+	 * This could cause an issue during power up, when PHY is up prior
+	 * to MAC. At this condition, once MAC side SGMII is up, MAC side
+	 * SGMII wouldn`t receive new in-band message from TI PHY with
+	 * correct link status, speed and duplex info.
+	 * Thus, implemented a SW solution here to retrigger SGMII Auto-Neg
+	 * whenever there is a link change.
+	 */
+	if (phydev->interface == PHY_INTERFACE_MODE_SGMII) {
+		int val = 0;
+
+		val = phy_clear_bits(phydev, DP83867_CFG2,
+				     DP83867_SGMII_AUTONEG_EN);
+		if (val < 0)
+			return;
+
+		phy_set_bits(phydev, DP83867_CFG2,
+			     DP83867_SGMII_AUTONEG_EN);
+	}
 }
 
 static struct phy_driver dp83867_driver[] = {
@@ -864,6 +906,8 @@ static struct phy_driver dp83867_driver[] = {
 
 		.suspend	= genphy_suspend,
 		.resume		= genphy_resume,
+
+		.link_change_notify = dp83867_link_change_notify,
 	},
 };
 module_phy_driver(dp83867_driver);

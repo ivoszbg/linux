@@ -29,10 +29,11 @@
 #include <linux/slab.h>
 #include <linux/vgaarb.h>
 #include <linux/numa.h>
+#include <linux/msi.h>
+#include <linux/irqdomain.h>
 
 #include <asm/processor.h>
 #include <asm/io.h>
-#include <asm/prom.h>
 #include <asm/pci-bridge.h>
 #include <asm/byteorder.h>
 #include <asm/machdep.h>
@@ -41,7 +42,7 @@
 
 #include "../../../drivers/pci/pci.h"
 
-/* hose_spinlock protects accesses to the the phb_bitmap. */
+/* hose_spinlock protects accesses to the phb_bitmap. */
 static DEFINE_SPINLOCK(hose_spinlock);
 LIST_HEAD(hose_list);
 
@@ -61,7 +62,7 @@ EXPORT_SYMBOL(isa_mem_base);
 
 static const struct dma_map_ops *pci_dma_ops;
 
-void set_pci_dma_ops(const struct dma_map_ops *dma_ops)
+void __init set_pci_dma_ops(const struct dma_map_ops *dma_ops)
 {
 	pci_dma_ops = dma_ops;
 }
@@ -1058,13 +1059,18 @@ void pcibios_bus_add_device(struct pci_dev *dev)
 		ppc_md.pcibios_bus_add_device(dev);
 }
 
-int pcibios_add_device(struct pci_dev *dev)
+int pcibios_device_add(struct pci_dev *dev)
 {
+	struct irq_domain *d;
+
 #ifdef CONFIG_PCI_IOV
 	if (ppc_md.pcibios_fixup_sriov)
 		ppc_md.pcibios_fixup_sriov(dev);
 #endif /* CONFIG_PCI_IOV */
 
+	d = dev_get_msi_domain(&dev->bus->dev);
+	if (d)
+		dev_set_msi_domain(&dev->dev, d);
 	return 0;
 }
 
@@ -1682,7 +1688,7 @@ EXPORT_SYMBOL_GPL(pcibios_scan_phb);
 static void fixup_hide_host_resource_fsl(struct pci_dev *dev)
 {
 	int i, class = dev->class >> 8;
-	/* When configured as agent, programing interface = 1 */
+	/* When configured as agent, programming interface = 1 */
 	int prog_if = dev->class & 0xf;
 
 	if ((class == PCI_CLASS_PROCESSOR_POWERPC ||

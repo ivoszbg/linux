@@ -99,6 +99,7 @@ struct pcpu_secy_stats {
  * struct macsec_dev - private data
  * @secy: SecY config
  * @real_dev: pointer to underlying netdevice
+ * @dev_tracker: refcount tracker for @real_dev reference
  * @stats: MACsec device stats
  * @secys: linked list of SecY's on the underlying device
  * @gro_cells: pointer to the Generic Receive Offload cell
@@ -107,6 +108,7 @@ struct pcpu_secy_stats {
 struct macsec_dev {
 	struct macsec_secy secy;
 	struct net_device *real_dev;
+	netdevice_tracker dev_tracker;
 	struct pcpu_secy_stats __percpu *stats;
 	struct list_head secys;
 	struct gro_cells gro_cells;
@@ -250,7 +252,7 @@ static bool send_sci(const struct macsec_secy *secy)
 		(secy->n_rx_sc > 1 && !tx_sc->end_station && !tx_sc->scb);
 }
 
-static sci_t make_sci(u8 *addr, __be16 port)
+static sci_t make_sci(const u8 *addr, __be16 port)
 {
 	sci_t sci;
 
@@ -1033,7 +1035,7 @@ static enum rx_handler_result handle_not_macsec(struct sk_buff *skb)
 				else
 					nskb->pkt_type = PACKET_MULTICAST;
 
-				netif_rx(nskb);
+				__netif_rx(nskb);
 			}
 			continue;
 		}
@@ -1056,7 +1058,7 @@ static enum rx_handler_result handle_not_macsec(struct sk_buff *skb)
 
 		nskb->dev = ndev;
 
-		if (netif_rx(nskb) == NET_RX_SUCCESS) {
+		if (__netif_rx(nskb) == NET_RX_SUCCESS) {
 			u64_stats_update_begin(&secy_stats->syncp);
 			secy_stats->stats.InPktsUntagged++;
 			u64_stats_update_end(&secy_stats->syncp);
@@ -1288,7 +1290,7 @@ nosci:
 
 		macsec_reset_skb(nskb, macsec->secy.netdev);
 
-		ret = netif_rx(nskb);
+		ret = __netif_rx(nskb);
 		if (ret == NET_RX_SUCCESS) {
 			u64_stats_update_begin(&secy_stats->syncp);
 			secy_stats->stats.InPktsUnknownSCI++;
@@ -1819,7 +1821,7 @@ static int macsec_add_rxsa(struct sk_buff *skb, struct genl_info *info)
 		ctx.sa.rx_sa = rx_sa;
 		ctx.secy = secy;
 		memcpy(ctx.sa.key, nla_data(tb_sa[MACSEC_SA_ATTR_KEY]),
-		       MACSEC_KEYID_LEN);
+		       secy->key_len);
 
 		err = macsec_offload(ops->mdo_add_rxsa, &ctx);
 		if (err)
@@ -2061,7 +2063,7 @@ static int macsec_add_txsa(struct sk_buff *skb, struct genl_info *info)
 		ctx.sa.tx_sa = tx_sa;
 		ctx.secy = secy;
 		memcpy(ctx.sa.key, nla_data(tb_sa[MACSEC_SA_ATTR_KEY]),
-		       MACSEC_KEYID_LEN);
+		       secy->key_len);
 
 		err = macsec_offload(ops->mdo_add_txsa, &ctx);
 		if (err)
@@ -3459,6 +3461,9 @@ static int macsec_dev_init(struct net_device *dev)
 	if (is_zero_ether_addr(dev->broadcast))
 		memcpy(dev->broadcast, real_dev->broadcast, dev->addr_len);
 
+	/* Get macsec's reference to real_dev */
+	dev_hold_track(real_dev, &macsec->dev_tracker, GFP_KERNEL);
+
 	return 0;
 }
 
@@ -3614,7 +3619,7 @@ static int macsec_set_mac_address(struct net_device *dev, void *p)
 	dev_uc_del(real_dev, dev->dev_addr);
 
 out:
-	ether_addr_copy(dev->dev_addr, addr->sa_data);
+	eth_hw_addr_set(dev, addr->sa_data);
 	macsec->secy.sci = dev_to_sci(dev, MACSEC_PORT_ES);
 
 	/* If h/w offloading is available, propagate to the device */
@@ -3704,6 +3709,8 @@ static void macsec_free_netdev(struct net_device *dev)
 	free_percpu(macsec->stats);
 	free_percpu(macsec->secy.tx_sc.stats);
 
+	/* Get rid of the macsec's reference to real_dev */
+	dev_put_track(macsec->real_dev, &macsec->dev_tracker);
 }
 
 static void macsec_setup(struct net_device *dev)
@@ -3870,6 +3877,18 @@ static void macsec_common_dellink(struct net_device *dev, struct list_head *head
 	struct macsec_dev *macsec = macsec_priv(dev);
 	struct net_device *real_dev = macsec->real_dev;
 
+	/* If h/w offloading is available, propagate to the device */
+	if (macsec_is_offloaded(macsec)) {
+		const struct macsec_ops *ops;
+		struct macsec_context ctx;
+
+		ops = macsec_get_ops(netdev_priv(dev), &ctx);
+		if (ops) {
+			ctx.secy = &macsec->secy;
+			macsec_offload(ops->mdo_del_secy, &ctx);
+		}
+	}
+
 	unregister_netdevice_queue(dev, head);
 	list_del_rcu(&macsec->secys);
 	macsec_del_dev(macsec);
@@ -3883,18 +3902,6 @@ static void macsec_dellink(struct net_device *dev, struct list_head *head)
 	struct macsec_dev *macsec = macsec_priv(dev);
 	struct net_device *real_dev = macsec->real_dev;
 	struct macsec_rxh_data *rxd = macsec_data_rtnl(real_dev);
-
-	/* If h/w offloading is available, propagate to the device */
-	if (macsec_is_offloaded(macsec)) {
-		const struct macsec_ops *ops;
-		struct macsec_context ctx;
-
-		ops = macsec_get_ops(netdev_priv(dev), &ctx);
-		if (ops) {
-			ctx.secy = &macsec->secy;
-			macsec_offload(ops->mdo_del_secy, &ctx);
-		}
-	}
 
 	macsec_common_dellink(dev, head);
 
@@ -4017,6 +4024,15 @@ static int macsec_newlink(struct net *net, struct net_device *dev,
 	if (macsec->offload != MACSEC_OFFLOAD_OFF &&
 	    !macsec_check_offload(macsec->offload, macsec))
 		return -EOPNOTSUPP;
+
+	/* send_sci must be set to true when transmit sci explicitly is set */
+	if ((data && data[IFLA_MACSEC_SCI]) &&
+	    (data && data[IFLA_MACSEC_INC_SCI])) {
+		u8 send_sci = !!nla_get_u8(data[IFLA_MACSEC_INC_SCI]);
+
+		if (!send_sci)
+			return -EINVAL;
+	}
 
 	if (data && data[IFLA_MACSEC_ICV_LEN])
 		icv_len = nla_get_u8(data[IFLA_MACSEC_ICV_LEN]);

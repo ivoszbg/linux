@@ -176,6 +176,8 @@
 	.get = snd_soc_get_volsw, .put = snd_soc_put_volsw, \
 	.private_value = SOC_DOUBLE_R_S_VALUE(reg_left, reg_right, xshift, \
 					    xmin, xmax, xsign_bit, xinvert) }
+#define SOC_SINGLE_S_TLV(xname, xreg, xshift, xmin, xmax, xsign_bit, xinvert, tlv_array) \
+	SOC_DOUBLE_R_S_TLV(xname, xreg, xreg, xshift, xmin, xmax, xsign_bit, xinvert, tlv_array)
 #define SOC_SINGLE_S8_TLV(xname, xreg, xmin, xmax, tlv_array) \
 {	.iface  = SNDRV_CTL_ELEM_IFACE_MIXER, .name = (xname), \
 	.access = SNDRV_CTL_ELEM_ACCESS_TLV_READ | \
@@ -280,6 +282,23 @@
 	.get = xhandler_get, .put = xhandler_put, \
 	.private_value = SOC_DOUBLE_R_VALUE(reg_left, reg_right, xshift, \
 					    xmax, xinvert) }
+#define SOC_DOUBLE_R_S_EXT_TLV(xname, reg_left, reg_right, xshift, xmin, xmax, \
+			       xsign_bit, xinvert, xhandler_get, xhandler_put, \
+			       tlv_array) \
+{	.iface = SNDRV_CTL_ELEM_IFACE_MIXER, .name = (xname), \
+	.access = SNDRV_CTL_ELEM_ACCESS_TLV_READ | \
+		  SNDRV_CTL_ELEM_ACCESS_READWRITE, \
+	.tlv.p = (tlv_array), \
+	.info = snd_soc_info_volsw, \
+	.get = xhandler_get, .put = xhandler_put, \
+	.private_value = SOC_DOUBLE_R_S_VALUE(reg_left, reg_right, xshift, \
+					      xmin, xmax, xsign_bit, xinvert) }
+#define SOC_SINGLE_S_EXT_TLV(xname, xreg, xshift, xmin, xmax, \
+			     xsign_bit, xinvert, xhandler_get, xhandler_put, \
+			     tlv_array) \
+	SOC_DOUBLE_R_S_EXT_TLV(xname, xreg, xreg, xshift, xmin, xmax, \
+			       xsign_bit, xinvert, xhandler_get, xhandler_put, \
+			       tlv_array)
 #define SOC_SINGLE_BOOL_EXT(xname, xdata, xhandler_get, xhandler_put) \
 {	.iface = SNDRV_CTL_ELEM_IFACE_MIXER, .name = xname, \
 	.info = snd_soc_info_bool_ext, \
@@ -485,6 +504,8 @@ int snd_soc_calc_frame_size(int sample_size, int channels, int tdm_slots);
 int snd_soc_params_to_frame_size(struct snd_pcm_hw_params *params);
 int snd_soc_calc_bclk(int fs, int sample_size, int channels, int tdm_slots);
 int snd_soc_params_to_bclk(struct snd_pcm_hw_params *parms);
+int snd_soc_tdm_params_to_bclk(struct snd_pcm_hw_params *params,
+			       int tdm_width, int tdm_slots, int slot_multiple);
 
 /* set runtime hw params */
 int snd_soc_set_runtime_hwparams(struct snd_pcm_substream *substream,
@@ -712,24 +733,48 @@ struct snd_soc_dai_link {
 	/* Do not create a PCM for this DAI link (Backend link) */
 	unsigned int ignore:1;
 
+	/* This flag will reorder stop sequence. By enabling this flag
+	 * DMA controller stop sequence will be invoked first followed by
+	 * CPU DAI driver stop sequence
+	 */
+	unsigned int stop_dma_first:1;
+
 #ifdef CONFIG_SND_SOC_TOPOLOGY
 	struct snd_soc_dobj dobj; /* For topology */
 #endif
 };
+
+static inline struct snd_soc_dai_link_component*
+asoc_link_to_cpu(struct snd_soc_dai_link *link, int n) {
+	return &(link)->cpus[n];
+}
+
+static inline struct snd_soc_dai_link_component*
+asoc_link_to_codec(struct snd_soc_dai_link *link, int n) {
+	return &(link)->codecs[n];
+}
+
+static inline struct snd_soc_dai_link_component*
+asoc_link_to_platform(struct snd_soc_dai_link *link, int n) {
+	return &(link)->platforms[n];
+}
+
 #define for_each_link_codecs(link, i, codec)				\
 	for ((i) = 0;							\
-	     ((i) < link->num_codecs) && ((codec) = &link->codecs[i]);	\
+	     ((i) < link->num_codecs) &&				\
+		     ((codec) = asoc_link_to_codec(link, i));		\
 	     (i)++)
 
 #define for_each_link_platforms(link, i, platform)			\
 	for ((i) = 0;							\
 	     ((i) < link->num_platforms) &&				\
-	     ((platform) = &link->platforms[i]);			\
+		     ((platform) = asoc_link_to_platform(link, i));	\
 	     (i)++)
 
 #define for_each_link_cpus(link, i, cpu)				\
 	for ((i) = 0;							\
-	     ((i) < link->num_cpus) && ((cpu) = &link->cpus[i]);	\
+	     ((i) < link->num_cpus) &&					\
+		     ((cpu) = asoc_link_to_cpu(link, i));		\
 	     (i)++)
 
 /*
@@ -868,8 +913,6 @@ struct snd_soc_card {
 	/* Mutex for PCM operations */
 	struct mutex pcm_mutex;
 	enum snd_soc_pcm_subclass pcm_subclass;
-
-	spinlock_t dpcm_lock;
 
 	int (*probe)(struct snd_soc_card *card);
 	int (*late_probe)(struct snd_soc_card *card);
@@ -1189,6 +1232,7 @@ int snd_soc_of_parse_card_name(struct snd_soc_card *card,
 			       const char *propname);
 int snd_soc_of_parse_audio_simple_widgets(struct snd_soc_card *card,
 					  const char *propname);
+int snd_soc_of_parse_pin_switches(struct snd_soc_card *card, const char *prop);
 int snd_soc_of_get_slot_mask(struct device_node *np,
 			     const char *prop_name,
 			     unsigned int *mask);
@@ -1214,12 +1258,25 @@ void snd_soc_of_parse_audio_prefix(struct snd_soc_card *card,
 int snd_soc_of_parse_audio_routing(struct snd_soc_card *card,
 				   const char *propname);
 int snd_soc_of_parse_aux_devs(struct snd_soc_card *card, const char *propname);
-unsigned int snd_soc_of_parse_daifmt(struct device_node *np,
-				     const char *prefix,
-				     struct device_node **bitclkmaster,
-				     struct device_node **framemaster);
+
+unsigned int snd_soc_daifmt_clock_provider_flipped(unsigned int dai_fmt);
+unsigned int snd_soc_daifmt_clock_provider_from_bitmap(unsigned int bit_frame);
+
+unsigned int snd_soc_daifmt_parse_format(struct device_node *np, const char *prefix);
+unsigned int snd_soc_daifmt_parse_clock_provider_raw(struct device_node *np,
+						     const char *prefix,
+						     struct device_node **bitclkmaster,
+						     struct device_node **framemaster);
+#define snd_soc_daifmt_parse_clock_provider_as_bitmap(np, prefix)	\
+	snd_soc_daifmt_parse_clock_provider_raw(np, prefix, NULL, NULL)
+#define snd_soc_daifmt_parse_clock_provider_as_phandle			\
+	snd_soc_daifmt_parse_clock_provider_raw
+#define snd_soc_daifmt_parse_clock_provider_as_flag(np, prefix)		\
+	snd_soc_daifmt_clock_provider_from_bitmap(			\
+		snd_soc_daifmt_parse_clock_provider_as_bitmap(np, prefix))
+
 int snd_soc_get_dai_id(struct device_node *ep);
-int snd_soc_get_dai_name(struct of_phandle_args *args,
+int snd_soc_get_dai_name(const struct of_phandle_args *args,
 			 const char **dai_name);
 int snd_soc_of_get_dai_name(struct device_node *of_node,
 			    const char **dai_name);
@@ -1227,6 +1284,10 @@ int snd_soc_of_get_dai_link_codecs(struct device *dev,
 				   struct device_node *of_node,
 				   struct snd_soc_dai_link *dai_link);
 void snd_soc_of_put_dai_link_codecs(struct snd_soc_dai_link *dai_link);
+int snd_soc_of_get_dai_link_cpus(struct device *dev,
+				 struct device_node *of_node,
+				 struct snd_soc_dai_link *dai_link);
+void snd_soc_of_put_dai_link_cpus(struct snd_soc_dai_link *dai_link);
 
 int snd_soc_add_pcm_runtime(struct snd_soc_card *card,
 			    struct snd_soc_dai_link *dai_link);
@@ -1262,12 +1323,16 @@ int snd_soc_fixup_dai_links_platform_name(struct snd_soc_card *card,
 
 	/* set platform name for each dailink */
 	for_each_card_prelinks(card, i, dai_link) {
-		name = devm_kstrdup(card->dev, platform_name, GFP_KERNEL);
-		if (!name)
-			return -ENOMEM;
+		/* only single platform is supported for now */
+		if (dai_link->num_platforms != 1)
+			return -EINVAL;
 
 		if (!dai_link->platforms)
 			return -EINVAL;
+
+		name = devm_kstrdup(card->dev, platform_name, GFP_KERNEL);
+		if (!name)
+			return -ENOMEM;
 
 		/* only single platform is supported for now */
 		dai_link->platforms->name = name;

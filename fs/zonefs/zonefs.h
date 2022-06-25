@@ -12,6 +12,7 @@
 #include <linux/uuid.h>
 #include <linux/mutex.h>
 #include <linux/rwsem.h>
+#include <linux/kobject.h>
 
 /*
  * Maximum length of file names: this only needs to be large enough to fit
@@ -39,6 +40,7 @@ static inline enum zonefs_ztype zonefs_zone_type(struct blk_zone *zone)
 }
 
 #define ZONEFS_ZONE_OPEN	(1 << 0)
+#define ZONEFS_ZONE_ACTIVE	(1 << 1)
 
 /*
  * In-memory inode data.
@@ -70,12 +72,11 @@ struct zonefs_inode_info {
 	 * and changes to the inode private data, and in particular changes to
 	 * a sequential file size on completion of direct IO writes.
 	 * Serialization of mmap read IOs with truncate and syscall IO
-	 * operations is done with i_mmap_sem in addition to i_truncate_mutex.
-	 * Only zonefs_seq_file_truncate() takes both lock (i_mmap_sem first,
-	 * i_truncate_mutex second).
+	 * operations is done with invalidate_lock in addition to
+	 * i_truncate_mutex.  Only zonefs_seq_file_truncate() takes both lock
+	 * (invalidate_lock first, i_truncate_mutex second).
 	 */
 	struct mutex		i_truncate_mutex;
-	struct rw_semaphore	i_mmap_sem;
 
 	/* guarded by i_truncate_mutex */
 	unsigned int		i_wr_refcnt;
@@ -183,8 +184,15 @@ struct zonefs_sb_info {
 	loff_t			s_blocks;
 	loff_t			s_used_blocks;
 
-	unsigned int		s_max_open_zones;
-	atomic_t		s_open_zones;
+	unsigned int		s_max_wro_seq_files;
+	atomic_t		s_wro_seq_files;
+
+	unsigned int		s_max_active_seq_files;
+	atomic_t		s_active_seq_files;
+
+	bool			s_sysfs_registered;
+	struct kobject		s_kobj;
+	struct completion	s_kobj_unregister;
 };
 
 static inline struct zonefs_sb_info *ZONEFS_SB(struct super_block *sb)
@@ -198,5 +206,10 @@ static inline struct zonefs_sb_info *ZONEFS_SB(struct super_block *sb)
 	pr_err("zonefs (%s) ERROR: " format, sb->s_id, ## args)
 #define zonefs_warn(sb, format, args...)	\
 	pr_warn("zonefs (%s) WARNING: " format, sb->s_id, ## args)
+
+int zonefs_sysfs_register(struct super_block *sb);
+void zonefs_sysfs_unregister(struct super_block *sb);
+int zonefs_sysfs_init(void);
+void zonefs_sysfs_exit(void);
 
 #endif

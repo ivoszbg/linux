@@ -298,7 +298,7 @@ static int rawv6_bind(struct sock *sk, struct sockaddr *uaddr, int addr_len)
 		 */
 		v4addr = LOOPBACK4_IPV6;
 		if (!(addr_type & IPV6_ADDR_MULTICAST) &&
-		    !sock_net(sk)->ipv6.sysctl.ip_nonlocal_bind) {
+		    !ipv6_can_nonlocal_bind(sock_net(sk), inet)) {
 			err = -EADDRNOTAVAIL;
 			if (!ipv6_chk_addr(sock_net(sk), &addr->sin6_addr,
 					   dev, 0)) {
@@ -354,7 +354,7 @@ static void rawv6_err(struct sock *sk, struct sk_buff *skb,
 
 	if (np->recverr || harderr) {
 		sk->sk_err = err;
-		sk->sk_error_report(sk);
+		sk_error_report(sk);
 	}
 }
 
@@ -460,7 +460,7 @@ int rawv6_rcv(struct sock *sk, struct sk_buff *skb)
  */
 
 static int rawv6_recvmsg(struct sock *sk, struct msghdr *msg, size_t len,
-			 int noblock, int flags, int *addr_len)
+			 int flags, int *addr_len)
 {
 	struct ipv6_pinfo *np = inet6_sk(sk);
 	DECLARE_SOCKADDR(struct sockaddr_in6 *, sin6, msg->msg_name);
@@ -477,7 +477,7 @@ static int rawv6_recvmsg(struct sock *sk, struct msghdr *msg, size_t len,
 	if (np->rxpmtu && np->rxopt.bits.rxpmtu)
 		return ipv6_recv_rxpmtu(sk, msg, len, addr_len);
 
-	skb = skb_recv_datagram(sk, flags, noblock, &err);
+	skb = skb_recv_datagram(sk, flags, &err);
 	if (!skb)
 		goto out;
 
@@ -512,7 +512,7 @@ static int rawv6_recvmsg(struct sock *sk, struct msghdr *msg, size_t len,
 		*addr_len = sizeof(*sin6);
 	}
 
-	sock_recv_ts_and_drops(msg, sk, skb);
+	sock_recv_cmsgs(msg, sk, skb);
 
 	if (np->rxopt.all)
 		ip6_datagram_recv_ctl(sk, msg, skb);
@@ -1019,6 +1019,9 @@ static int do_rawv6_setsockopt(struct sock *sk, int level, int optname,
 {
 	struct raw6_sock *rp = raw6_sk(sk);
 	int val;
+
+	if (optlen < sizeof(val))
+		return -EINVAL;
 
 	if (copy_from_sockptr(&val, optval, sizeof(val)))
 		return -EFAULT;

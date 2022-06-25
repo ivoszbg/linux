@@ -25,7 +25,7 @@
 #include <linux/of_dma.h>
 
 #include <asm/irq.h>
-#include <linux/platform_data/dma-imx.h>
+#include <linux/dma/imx-dma.h>
 
 #include "dmaengine.h"
 #define IMXDMA_MAX_CHAN_DESCRIPTORS	16
@@ -811,6 +811,8 @@ static struct dma_async_tx_descriptor *imxdma_prep_slave_sg(
 	for_each_sg(sgl, sg, sg_len, i) {
 		dma_length += sg_dma_len(sg);
 	}
+
+	imxdma_config_write(chan, &imxdmac->config, direction);
 
 	switch (imxdmac->word_size) {
 	case DMA_SLAVE_BUSWIDTH_4_BYTES:

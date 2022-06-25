@@ -52,6 +52,7 @@
 	SRI(AFMT_60958_1, DIG, id), \
 	SRI(AFMT_60958_2, DIG, id), \
 	SRI(DIG_FE_CNTL, DIG, id), \
+	SRI(DIG_FIFO_STATUS, DIG, id), \
 	SRI(HDMI_CONTROL, DIG, id), \
 	SRI(HDMI_DB_CONTROL, DIG, id), \
 	SRI(HDMI_GC, DIG, id), \
@@ -91,6 +92,8 @@
 	SRI(DP_VID_STREAM_CNTL, DP, id), \
 	SRI(DP_VID_TIMING, DP, id), \
 	SRI(DP_SEC_AUD_N, DP, id), \
+	SRI(DP_SEC_AUD_N_READBACK, DP, id), \
+	SRI(DP_SEC_AUD_M_READBACK, DP, id), \
 	SRI(DP_SEC_TIMESTAMP, DP, id), \
 	SRI(DIG_CLOCK_PATTERN, DIG, id)
 
@@ -124,6 +127,7 @@ struct dcn10_stream_enc_registers {
 	uint32_t AFMT_60958_2;
 	uint32_t DIG_FE_CNTL;
 	uint32_t DIG_FE_CNTL2;
+	uint32_t DIG_FIFO_STATUS;
 	uint32_t DP_MSE_RATE_CNTL;
 	uint32_t DP_MSE_RATE_UPDATE;
 	uint32_t DP_PIXEL_FORMAT;
@@ -138,6 +142,8 @@ struct dcn10_stream_enc_registers {
 	uint32_t DP_VID_STREAM_CNTL;
 	uint32_t DP_VID_TIMING;
 	uint32_t DP_SEC_AUD_N;
+	uint32_t DP_SEC_AUD_N_READBACK;
+	uint32_t DP_SEC_AUD_M_READBACK;
 	uint32_t DP_SEC_TIMESTAMP;
 	uint32_t HDMI_CONTROL;
 	uint32_t HDMI_GC;
@@ -254,6 +260,8 @@ struct dcn10_stream_enc_registers {
 	SE_SF(DIG0_AFMT_60958_2, AFMT_60958_CS_CHANNEL_NUMBER_6, mask_sh),\
 	SE_SF(DIG0_AFMT_60958_2, AFMT_60958_CS_CHANNEL_NUMBER_7, mask_sh),\
 	SE_SF(DP0_DP_SEC_AUD_N, DP_SEC_AUD_N, mask_sh),\
+	SE_SF(DP0_DP_SEC_AUD_N_READBACK, DP_SEC_AUD_N_READBACK, mask_sh),\
+	SE_SF(DP0_DP_SEC_AUD_M_READBACK, DP_SEC_AUD_M_READBACK, mask_sh),\
 	SE_SF(DP0_DP_SEC_TIMESTAMP, DP_SEC_TIMESTAMP_MODE, mask_sh),\
 	SE_SF(DP0_DP_SEC_CNTL, DP_SEC_ASP_ENABLE, mask_sh),\
 	SE_SF(DP0_DP_SEC_CNTL, DP_SEC_ATP_ENABLE, mask_sh),\
@@ -266,6 +274,17 @@ struct dcn10_stream_enc_registers {
 	SE_SF(DIG0_DIG_FE_CNTL, TMDS_COLOR_FORMAT, mask_sh),\
 	SE_SF(DIG0_DIG_FE_CNTL, DIG_STEREOSYNC_SELECT, mask_sh),\
 	SE_SF(DIG0_DIG_FE_CNTL, DIG_STEREOSYNC_GATE_EN, mask_sh),\
+	SE_SF(DIG0_DIG_FIFO_STATUS, DIG_FIFO_LEVEL_ERROR, mask_sh),\
+	SE_SF(DIG0_DIG_FIFO_STATUS, DIG_FIFO_USE_OVERWRITE_LEVEL, mask_sh),\
+	SE_SF(DIG0_DIG_FIFO_STATUS, DIG_FIFO_OVERWRITE_LEVEL, mask_sh),\
+	SE_SF(DIG0_DIG_FIFO_STATUS, DIG_FIFO_ERROR_ACK, mask_sh),\
+	SE_SF(DIG0_DIG_FIFO_STATUS, DIG_FIFO_CAL_AVERAGE_LEVEL, mask_sh),\
+	SE_SF(DIG0_DIG_FIFO_STATUS, DIG_FIFO_MAXIMUM_LEVEL, mask_sh),\
+	SE_SF(DIG0_DIG_FIFO_STATUS, DIG_FIFO_MINIMUM_LEVEL, mask_sh),\
+	SE_SF(DIG0_DIG_FIFO_STATUS, DIG_FIFO_READ_CLOCK_SRC, mask_sh),\
+	SE_SF(DIG0_DIG_FIFO_STATUS, DIG_FIFO_CALIBRATED, mask_sh),\
+	SE_SF(DIG0_DIG_FIFO_STATUS, DIG_FIFO_FORCE_RECAL_AVERAGE, mask_sh),\
+	SE_SF(DIG0_DIG_FIFO_STATUS, DIG_FIFO_FORCE_RECOMP_MINMAX, mask_sh),\
 	SE_SF(DIG0_AFMT_VBI_PACKET_CONTROL, AFMT_GENERIC_LOCK_STATUS, mask_sh),\
 	SE_SF(DIG0_AFMT_VBI_PACKET_CONTROL, AFMT_GENERIC_CONFLICT, mask_sh),\
 	SE_SF(DIG0_AFMT_VBI_PACKET_CONTROL, AFMT_GENERIC_CONFLICT_CLR, mask_sh),\
@@ -460,6 +479,8 @@ struct dcn10_stream_enc_registers {
 	type AFMT_60958_CS_CHANNEL_NUMBER_6;\
 	type AFMT_60958_CS_CHANNEL_NUMBER_7;\
 	type DP_SEC_AUD_N;\
+	type DP_SEC_AUD_N_READBACK;\
+	type DP_SEC_AUD_M_READBACK;\
 	type DP_SEC_TIMESTAMP_MODE;\
 	type DP_SEC_ASP_ENABLE;\
 	type DP_SEC_ATP_ENABLE;\
@@ -488,6 +509,17 @@ struct dcn10_stream_enc_registers {
 	type DP_VID_N_MUL;\
 	type DP_VID_M_DOUBLE_VALUE_EN;\
 	type DIG_SOURCE_SELECT;\
+	type DIG_FIFO_LEVEL_ERROR;\
+	type DIG_FIFO_USE_OVERWRITE_LEVEL;\
+	type DIG_FIFO_OVERWRITE_LEVEL;\
+	type DIG_FIFO_ERROR_ACK;\
+	type DIG_FIFO_CAL_AVERAGE_LEVEL;\
+	type DIG_FIFO_MAXIMUM_LEVEL;\
+	type DIG_FIFO_MINIMUM_LEVEL;\
+	type DIG_FIFO_READ_CLOCK_SRC;\
+	type DIG_FIFO_CALIBRATED;\
+	type DIG_FIFO_FORCE_RECAL_AVERAGE;\
+	type DIG_FIFO_FORCE_RECOMP_MINMAX;\
 	type DIG_CLOCK_PATTERN
 
 #define SE_REG_FIELD_LIST_DCN2_0(type) \
@@ -603,9 +635,11 @@ void enc1_stream_encoder_stop_dp_info_packets(
 	struct stream_encoder *enc);
 
 void enc1_stream_encoder_dp_blank(
+	struct dc_link *link,
 	struct stream_encoder *enc);
 
 void enc1_stream_encoder_dp_unblank(
+	struct dc_link *link,
 	struct stream_encoder *enc,
 	const struct encoder_unblank_param *param);
 
