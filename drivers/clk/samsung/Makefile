@@ -5,6 +5,7 @@
 
 obj-$(CONFIG_COMMON_CLK)	+= clk.o clk-pll.o clk-cpu.o
 obj-$(CONFIG_EXYNOS_3250_COMMON_CLK)	+= clk-exynos3250.o
+obj-$(CONFIG_EXYNOS_3475_COMMON_CLK)	+= clk-exynos3475.o
 obj-$(CONFIG_EXYNOS_4_COMMON_CLK)	+= clk-exynos4.o
 obj-$(CONFIG_EXYNOS_4_COMMON_CLK)	+= clk-exynos4412-isp.o
 obj-$(CONFIG_EXYNOS_5250_COMMON_CLK)	+= clk-exynos5250.o
