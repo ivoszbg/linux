@@ -26,9 +26,7 @@ static void __dma_tx_complete(void *param)
 
 	dma->tx_running = 0;
 
-	xmit->tail += dma->tx_size;
-	xmit->tail &= UART_XMIT_SIZE - 1;
-	p->port.icount.tx += dma->tx_size;
+	uart_xmit_advance(&p->port, dma->tx_size);
 
 	if (uart_circ_chars_pending(xmit) < WAKEUP_CHARS)
 		uart_write_wakeup(&p->port);
@@ -106,10 +104,9 @@ int serial8250_tx_dma(struct uart_8250_port *p)
 				   UART_XMIT_SIZE, DMA_TO_DEVICE);
 
 	dma_async_issue_pending(dma->txchan);
-	if (dma->tx_err) {
-		dma->tx_err = 0;
-		serial8250_clear_THRI(p);
-	}
+	serial8250_clear_THRI(p);
+	dma->tx_err = 0;
+
 	return 0;
 err:
 	dma->tx_err = 1;

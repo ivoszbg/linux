@@ -222,7 +222,7 @@ static void ptrace_unfreeze_traced(struct task_struct *task)
 	if (lock_task_sighand(task, &flags)) {
 		task->jobctl &= ~JOBCTL_PTRACE_FROZEN;
 		if (__fatal_signal_pending(task)) {
-			task->jobctl &= ~TASK_TRACED;
+			task->jobctl &= ~JOBCTL_TRACED;
 			wake_up_state(task, __TASK_TRACED);
 		}
 		unlock_task_sighand(task, &flags);
@@ -269,7 +269,7 @@ static int ptrace_check_attach(struct task_struct *child, bool ignore_state)
 	read_unlock(&tasklist_lock);
 
 	if (!ret && !ignore_state &&
-	    WARN_ON_ONCE(!wait_task_inactive(child, __TASK_TRACED)))
+	    WARN_ON_ONCE(!wait_task_inactive(child, __TASK_TRACED|TASK_FROZEN)))
 		ret = -ESRCH;
 
 	return ret;

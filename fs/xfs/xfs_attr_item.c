@@ -86,8 +86,6 @@ xfs_attri_log_nameval_alloc(
 	 */
 	nv = xlog_kvmalloc(sizeof(struct xfs_attri_log_nameval) +
 					name_len + value_len);
-	if (!nv)
-		return nv;
 
 	nv->name.i_addr = nv + 1;
 	nv->name.i_len = name_len;
@@ -441,8 +439,6 @@ xfs_attr_create_intent(
 		attr->xattri_nameval = xfs_attri_log_nameval_alloc(args->name,
 				args->namelen, args->value, args->valuelen);
 	}
-	if (!attr->xattri_nameval)
-		return ERR_PTR(-ENOMEM);
 
 	attrip = xfs_attri_init(mp, attr->xattri_nameval);
 	xfs_trans_add_item(tp, &attrip->attri_item);
@@ -576,7 +572,7 @@ xfs_attri_item_recover(
 	struct xfs_trans_res		tres;
 	struct xfs_attri_log_format	*attrp;
 	struct xfs_attri_log_nameval	*nv = attrip->attri_nameval;
-	int				error, ret = 0;
+	int				error;
 	int				total;
 	int				local;
 	struct xfs_attrd_log_item	*done_item = NULL;
@@ -655,29 +651,32 @@ xfs_attri_item_recover(
 	xfs_ilock(ip, XFS_ILOCK_EXCL);
 	xfs_trans_ijoin(tp, ip, 0);
 
-	ret = xfs_xattri_finish_update(attr, done_item);
-	if (ret == -EAGAIN) {
-		/* There's more work to do, so add it to this transaction */
+	error = xfs_xattri_finish_update(attr, done_item);
+	if (error == -EAGAIN) {
+		/*
+		 * There's more work to do, so add the intent item to this
+		 * transaction so that we can continue it later.
+		 */
 		xfs_defer_add(tp, XFS_DEFER_OPS_TYPE_ATTR, &attr->xattri_list);
-	} else
-		error = ret;
+		error = xfs_defer_ops_capture_and_commit(tp, capture_list);
+		if (error)
+			goto out_unlock;
 
+		xfs_iunlock(ip, XFS_ILOCK_EXCL);
+		xfs_irele(ip);
+		return 0;
+	}
 	if (error) {
 		xfs_trans_cancel(tp);
 		goto out_unlock;
 	}
 
 	error = xfs_defer_ops_capture_and_commit(tp, capture_list);
-
 out_unlock:
-	if (attr->xattri_leaf_bp)
-		xfs_buf_relse(attr->xattri_leaf_bp);
-
 	xfs_iunlock(ip, XFS_ILOCK_EXCL);
 	xfs_irele(ip);
 out:
-	if (ret != -EAGAIN)
-		xfs_attr_free_item(attr);
+	xfs_attr_free_item(attr);
 	return error;
 }
 
@@ -759,8 +758,6 @@ xlog_recover_attri_commit_pass2(
 	nv = xfs_attri_log_nameval_alloc(attr_name,
 			attri_formatp->alfi_name_len, attr_value,
 			attri_formatp->alfi_value_len);
-	if (!nv)
-		return -ENOMEM;
 
 	attrip = xfs_attri_init(mp, nv);
 	error = xfs_attri_copy_format(&item->ri_buf[0], &attrip->attri_format);

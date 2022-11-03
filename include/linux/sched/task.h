@@ -85,7 +85,7 @@ static inline void exit_thread(struct task_struct *tsk)
 extern __noreturn void do_group_exit(int);
 
 extern void exit_files(struct task_struct *);
-extern void exit_itimers(struct signal_struct *);
+extern void exit_itimers(struct task_struct *);
 
 extern pid_t kernel_clone(struct kernel_clone_args *kargs);
 struct task_struct *create_io_thread(int (*fn)(void *), void *arg, int node);
@@ -126,6 +126,9 @@ static inline void put_task_struct_many(struct task_struct *t, int nr)
 }
 
 void put_task_struct_rcu_user(struct task_struct *task);
+
+/* Free all architecture-specific resources held by a thread. */
+void release_thread(struct task_struct *dead_task);
 
 #ifdef CONFIG_ARCH_WANTS_DYNAMIC_TASK_STRUCT
 extern int arch_task_struct_size __read_mostly;

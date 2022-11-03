@@ -80,7 +80,6 @@ BUILD_FPR_ACCESS(64)
 
 struct loongarch_fpu {
 	unsigned int	fcsr;
-	unsigned int	vcsr;
 	uint64_t	fcc;	/* 8x8 */
 	union fpureg	fpr[NUM_FPU_REGS];
 };
@@ -101,6 +100,10 @@ struct thread_struct {
 	unsigned long reg01, reg03, reg22; /* ra sp fp */
 	unsigned long reg23, reg24, reg25, reg26; /* s0-s3 */
 	unsigned long reg27, reg28, reg29, reg30, reg31; /* s4-s8 */
+
+	/* __schedule() return address / call frame address */
+	unsigned long sched_ra;
+	unsigned long sched_cfa;
 
 	/* CSR registers */
 	unsigned long csr_prmd;
@@ -130,6 +133,9 @@ struct thread_struct {
 	struct loongarch_fpu fpu FPU_ALIGN;
 };
 
+#define thread_saved_ra(tsk)	(tsk->thread.sched_ra)
+#define thread_saved_fp(tsk)	(tsk->thread.sched_cfa)
+
 #define INIT_THREAD  {						\
 	/*							\
 	 * Main processor registers				\
@@ -146,6 +152,8 @@ struct thread_struct {
 	.reg29			= 0,				\
 	.reg30			= 0,				\
 	.reg31			= 0,				\
+	.sched_ra		= 0,				\
+	.sched_cfa		= 0,				\
 	.csr_crmd		= 0,				\
 	.csr_prmd		= 0,				\
 	.csr_euen		= 0,				\
@@ -161,16 +169,12 @@ struct thread_struct {
 	 */							\
 	.fpu			= {				\
 		.fcsr		= 0,				\
-		.vcsr		= 0,				\
 		.fcc		= 0,				\
 		.fpr		= {{{0,},},},			\
 	},							\
 }
 
 struct task_struct;
-
-/* Free all resources held by a thread. */
-#define release_thread(thread) do { } while (0)
 
 enum idle_boot_override {IDLE_NO_OVERRIDE = 0, IDLE_HALT, IDLE_NOMWAIT, IDLE_POLL};
 
@@ -187,7 +191,7 @@ static inline void flush_thread(void)
 unsigned long __get_wchan(struct task_struct *p);
 
 #define __KSTK_TOS(tsk) ((unsigned long)task_stack_page(tsk) + \
-			 THREAD_SIZE - 32 - sizeof(struct pt_regs))
+			 THREAD_SIZE - sizeof(struct pt_regs))
 #define task_pt_regs(tsk) ((struct pt_regs *)__KSTK_TOS(tsk))
 #define KSTK_EIP(tsk) (task_pt_regs(tsk)->csr_era)
 #define KSTK_ESP(tsk) (task_pt_regs(tsk)->regs[3])
