@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0 OR BSD-2-Clause */
 /*
- * Copyright 2018-2021 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright 2018-2023 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
 #ifndef _EFA_COM_CMD_H_
@@ -75,7 +75,8 @@ struct efa_com_create_cq_params {
 	u16 uarn;
 	u16 eqn;
 	u8 entry_size_in_bytes;
-	bool interrupt_mode_enabled;
+	u8 interrupt_mode_enabled : 1;
+	u8 set_src_addr : 1;
 };
 
 struct efa_com_create_cq_result {
@@ -261,10 +262,18 @@ struct efa_com_rdma_read_stats {
 	u64 read_resp_bytes;
 };
 
+struct efa_com_rdma_write_stats {
+	u64 write_wrs;
+	u64 write_bytes;
+	u64 write_wr_err;
+	u64 write_recv_bytes;
+};
+
 union efa_com_get_stats_result {
 	struct efa_com_basic_stats basic_stats;
 	struct efa_com_messages_stats messages_stats;
 	struct efa_com_rdma_read_stats rdma_read_stats;
+	struct efa_com_rdma_write_stats rdma_write_stats;
 };
 
 int efa_com_create_qp(struct efa_com_dev *edev,

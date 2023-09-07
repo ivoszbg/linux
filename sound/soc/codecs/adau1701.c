@@ -772,14 +772,13 @@ static const struct snd_soc_component_driver adau1701_component_drv = {
 	.set_sysclk		= adau1701_set_sysclk,
 	.use_pmdown_time	= 1,
 	.endianness		= 1,
-	.non_legacy_dai_naming	= 1,
 };
 
 static const struct regmap_config adau1701_regmap = {
 	.reg_bits		= 16,
 	.val_bits		= 32,
 	.max_register		= ADAU1701_MAX_REGISTER,
-	.cache_type		= REGCACHE_RBTREE,
+	.cache_type		= REGCACHE_MAPLE,
 	.volatile_reg		= adau1701_volatile_reg,
 	.reg_write		= adau1701_reg_write,
 	.reg_read		= adau1701_reg_read,
@@ -877,7 +876,7 @@ static struct i2c_driver adau1701_i2c_driver = {
 		.name	= "adau1701",
 		.of_match_table	= of_match_ptr(adau1701_dt_ids),
 	},
-	.probe_new	= adau1701_i2c_probe,
+	.probe		= adau1701_i2c_probe,
 	.id_table	= adau1701_i2c_id,
 };
 

@@ -22,7 +22,7 @@ static int type_show(struct seq_file *file, void *priv)
 	struct mlx5_lag *ldev;
 	char *mode = NULL;
 
-	ldev = dev->priv.lag;
+	ldev = mlx5_lag_dev(dev);
 	mutex_lock(&ldev->lock);
 	if (__mlx5_lag_is_active(ldev))
 		mode = get_str_mode_type(ldev);
@@ -41,10 +41,10 @@ static int port_sel_mode_show(struct seq_file *file, void *priv)
 	int ret = 0;
 	char *mode;
 
-	ldev = dev->priv.lag;
+	ldev = mlx5_lag_dev(dev);
 	mutex_lock(&ldev->lock);
 	if (__mlx5_lag_is_active(ldev))
-		mode = mlx5_get_str_port_sel_mode(ldev);
+		mode = mlx5_get_str_port_sel_mode(ldev->mode, ldev->mode_flags);
 	else
 		ret = -EINVAL;
 	mutex_unlock(&ldev->lock);
@@ -61,7 +61,7 @@ static int state_show(struct seq_file *file, void *priv)
 	struct mlx5_lag *ldev;
 	bool active;
 
-	ldev = dev->priv.lag;
+	ldev = mlx5_lag_dev(dev);
 	mutex_lock(&ldev->lock);
 	active = __mlx5_lag_is_active(ldev);
 	mutex_unlock(&ldev->lock);
@@ -72,21 +72,29 @@ static int state_show(struct seq_file *file, void *priv)
 static int flags_show(struct seq_file *file, void *priv)
 {
 	struct mlx5_core_dev *dev = file->private;
+	bool fdb_sel_mode_native;
 	struct mlx5_lag *ldev;
 	bool shared_fdb;
 	bool lag_active;
 
-	ldev = dev->priv.lag;
+	ldev = mlx5_lag_dev(dev);
 	mutex_lock(&ldev->lock);
 	lag_active = __mlx5_lag_is_active(ldev);
-	if (lag_active)
-		shared_fdb = test_bit(MLX5_LAG_MODE_FLAG_SHARED_FDB, &ldev->mode_flags);
+	if (!lag_active)
+		goto unlock;
 
+	shared_fdb = test_bit(MLX5_LAG_MODE_FLAG_SHARED_FDB, &ldev->mode_flags);
+	fdb_sel_mode_native = test_bit(MLX5_LAG_MODE_FLAG_FDB_SEL_MODE_NATIVE,
+				       &ldev->mode_flags);
+
+unlock:
 	mutex_unlock(&ldev->lock);
 	if (!lag_active)
 		return -EINVAL;
 
 	seq_printf(file, "%s:%s\n", "shared_fdb", shared_fdb ? "on" : "off");
+	seq_printf(file, "%s:%s\n", "fdb_selection_mode",
+		   fdb_sel_mode_native ? "native" : "affinity");
 	return 0;
 }
 
@@ -100,7 +108,7 @@ static int mapping_show(struct seq_file *file, void *priv)
 	int num_ports;
 	int i;
 
-	ldev = dev->priv.lag;
+	ldev = mlx5_lag_dev(dev);
 	mutex_lock(&ldev->lock);
 	lag_active = __mlx5_lag_is_active(ldev);
 	if (lag_active) {
@@ -134,7 +142,7 @@ static int members_show(struct seq_file *file, void *priv)
 	struct mlx5_lag *ldev;
 	int i;
 
-	ldev = dev->priv.lag;
+	ldev = mlx5_lag_dev(dev);
 	mutex_lock(&ldev->lock);
 	for (i = 0; i < ldev->ports; i++) {
 		if (!ldev->pf[i].dev)

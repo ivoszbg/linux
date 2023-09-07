@@ -1,20 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * NXP Wireless LAN device driver: scan ioctl and command handling
  *
  * Copyright 2011-2020 NXP
- *
- * This software file (the "File") is distributed by NXP
- * under the terms of the GNU General Public License Version 2, June 1991
- * (the "License").  You may use, redistribute and/or modify this File in
- * accordance with the terms and conditions of the License, a copy of which
- * is available by writing to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA or on the
- * worldwide web at http://www.gnu.org/licenses/old-licenses/gpl-2.0.txt.
- *
- * THE FILE IS DISTRIBUTED AS-IS, WITHOUT WARRANTY OF ANY KIND, AND THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE
- * ARE EXPRESSLY DISCLAIMED.  The License provides additional details about
- * this warranty disclaimer.
  */
 
 #include "decl.h"
@@ -624,7 +612,6 @@ mwifiex_scan_channel_list(struct mwifiex_private *priv,
 	struct mwifiex_adapter *adapter = priv->adapter;
 	int ret = 0;
 	struct mwifiex_chan_scan_param_set *tmp_chan_list;
-	struct mwifiex_chan_scan_param_set *start_chan;
 	u32 tlv_idx, rates_size, cmd_no;
 	u32 total_scan_time;
 	u32 done_early;
@@ -655,7 +642,6 @@ mwifiex_scan_channel_list(struct mwifiex_private *priv,
 		total_scan_time = 0;
 		radio_type = 0;
 		chan_tlv_out->header.len = 0;
-		start_chan = tmp_chan_list;
 		done_early = false;
 
 		/*
@@ -762,8 +748,6 @@ mwifiex_scan_channel_list(struct mwifiex_private *priv,
 		rates_size = mwifiex_append_rate_tlv(priv, scan_cfg_out,
 						     radio_type);
 
-		priv->adapter->scan_channels = start_chan;
-
 		/* Send the scan command to the firmware with the specified
 		   cfg */
 		if (priv->adapter->ext_scan)
@@ -840,7 +824,6 @@ mwifiex_config_scan(struct mwifiex_private *priv,
 	u8 ssid_filter;
 	struct mwifiex_ie_types_htcap *ht_cap;
 	struct mwifiex_ie_types_bss_mode *bss_mode;
-	const u8 zero_mac[6] = {0, 0, 0, 0, 0, 0};
 
 	/* The tlv_buf_len is calculated for each scan command.  The TLVs added
 	   in this routine will be preserved since the routine that sends the
@@ -978,7 +961,7 @@ mwifiex_config_scan(struct mwifiex_private *priv,
 				  sizeof(struct mwifiex_ie_types_scan_chan_gap);
 		}
 
-		if (!ether_addr_equal(user_scan_in->random_mac, zero_mac)) {
+		if (!is_zero_ether_addr(user_scan_in->random_mac)) {
 			random_mac_tlv = (void *)tlv_pos;
 			random_mac_tlv->header.type =
 					 cpu_to_le16(TLV_TYPE_RANDOM_MAC);
@@ -2199,9 +2182,9 @@ int mwifiex_ret_802_11_scan(struct mwifiex_private *priv,
 
 	if (nd_config) {
 		adapter->nd_info =
-			kzalloc(sizeof(struct cfg80211_wowlan_nd_match) +
-				sizeof(struct cfg80211_wowlan_nd_match *) *
-				scan_rsp->number_of_sets, GFP_ATOMIC);
+			kzalloc(struct_size(adapter->nd_info, matches,
+					    scan_rsp->number_of_sets),
+				GFP_ATOMIC);
 
 		if (adapter->nd_info)
 			adapter->nd_info->n_matches = scan_rsp->number_of_sets;

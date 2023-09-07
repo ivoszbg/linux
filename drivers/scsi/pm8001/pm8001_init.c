@@ -43,7 +43,8 @@
 #include "pm8001_chips.h"
 #include "pm80xx_hwi.h"
 
-static ulong logging_level = PM8001_FAIL_LOGGING | PM8001_IOERR_LOGGING;
+static ulong logging_level = PM8001_FAIL_LOGGING | PM8001_IOERR_LOGGING |
+				PM8001_EVENT_LOGGING | PM8001_INIT_LOGGING;
 module_param(logging_level, ulong, 0644);
 MODULE_PARM_DESC(logging_level, " bits for enabling logging info.");
 
@@ -56,7 +57,7 @@ MODULE_PARM_DESC(link_rate, "Enable link rate.\n"
 		" 8: Link rate 12.0G\n");
 
 static struct scsi_transport_template *pm8001_stt;
-static int pm8001_init_ccb_tag(struct pm8001_hba_info *, struct Scsi_Host *, struct pci_dev *);
+static int pm8001_init_ccb_tag(struct pm8001_hba_info *);
 
 /*
  * chip info structure to identify chip key functionality as
@@ -81,12 +82,25 @@ LIST_HEAD(hba_list);
 
 struct workqueue_struct *pm8001_wq;
 
+static void pm8001_map_queues(struct Scsi_Host *shost)
+{
+	struct sas_ha_struct *sha = SHOST_TO_SAS_HA(shost);
+	struct pm8001_hba_info *pm8001_ha = sha->lldd_ha;
+	struct blk_mq_queue_map *qmap = &shost->tag_set.map[HCTX_TYPE_DEFAULT];
+
+	if (pm8001_ha->number_of_intr > 1)
+		blk_mq_pci_map_queues(qmap, pm8001_ha->pdev, 1);
+
+	return blk_mq_map_queues(qmap);
+}
+
 /*
  * The main structure which LLDD must register for scsi core.
  */
-static struct scsi_host_template pm8001_sht = {
+static const struct scsi_host_template pm8001_sht = {
 	.module			= THIS_MODULE,
 	.name			= DRV_NAME,
+	.proc_name		= DRV_NAME,
 	.queuecommand		= sas_queuecommand,
 	.dma_need_drain		= ata_scsi_dma_need_drain,
 	.target_alloc		= sas_target_alloc,
@@ -109,6 +123,8 @@ static struct scsi_host_template pm8001_sht = {
 #endif
 	.shost_groups		= pm8001_host_groups,
 	.track_queue_depth	= 1,
+	.cmd_per_lun		= 32,
+	.map_queues		= pm8001_map_queues,
 };
 
 /*
@@ -143,11 +159,11 @@ static void pm8001_phy_init(struct pm8001_hba_info *pm8001_ha, int phy_id)
 	struct asd_sas_phy *sas_phy = &phy->sas_phy;
 	phy->phy_state = PHY_LINK_DISABLE;
 	phy->pm8001_ha = pm8001_ha;
+	phy->minimum_linkrate = SAS_LINK_RATE_1_5_GBPS;
+	phy->maximum_linkrate = SAS_LINK_RATE_6_0_GBPS;
 	sas_phy->enabled = (phy_id < pm8001_ha->chip->n_phy) ? 1 : 0;
-	sas_phy->class = SAS;
 	sas_phy->iproto = SAS_PROTOCOL_ALL;
 	sas_phy->tproto = 0;
-	sas_phy->type = PHY_TYPE_PHYSICAL;
 	sas_phy->role = PHY_ROLE_INITIATOR;
 	sas_phy->oob_mode = OOB_NOT_CONNECTED;
 	sas_phy->linkrate = SAS_LINK_RATE_UNKNOWN;
@@ -180,7 +196,7 @@ static void pm8001_free(struct pm8001_hba_info *pm8001_ha)
 	}
 	PM8001_CHIP_DISP->chip_iounmap(pm8001_ha);
 	flush_workqueue(pm8001_wq);
-	bitmap_free(pm8001_ha->tags);
+	bitmap_free(pm8001_ha->rsvd_tags);
 	kfree(pm8001_ha);
 }
 
@@ -420,8 +436,6 @@ static int pm8001_alloc(struct pm8001_hba_info *pm8001_ha,
 		atomic_set(&pm8001_ha->devices[i].running_req, 0);
 	}
 	pm8001_ha->flags = PM8001F_INIT_TIME;
-	/* Initialize tags */
-	pm8001_tag_init(pm8001_ha);
 	return 0;
 
 err_out_nodev:
@@ -605,12 +619,8 @@ static int pm8001_prep_sas_ha_init(struct Scsi_Host *shost,
 
 	shost->transportt = pm8001_stt;
 	shost->max_id = PM8001_MAX_DEVICES;
-	shost->max_lun = 8;
-	shost->max_channel = 0;
 	shost->unique_id = pm8001_id;
 	shost->max_cmd_len = 16;
-	shost->can_queue = PM8001_CAN_QUEUE;
-	shost->cmd_per_lun = 32;
 	return 0;
 exit_free1:
 	kfree(arr_port);
@@ -642,10 +652,9 @@ static void  pm8001_post_sas_ha_init(struct Scsi_Host *shost,
 	sha->sas_ha_name = DRV_NAME;
 	sha->dev = pm8001_ha->dev;
 	sha->strict_wide_ports = 1;
-	sha->lldd_module = THIS_MODULE;
 	sha->sas_addr = &pm8001_ha->sas_addr[0];
 	sha->num_phys = chip_info->n_phy;
-	sha->core.shost = shost;
+	sha->shost = shost;
 }
 
 /**
@@ -655,7 +664,7 @@ static void  pm8001_post_sas_ha_init(struct Scsi_Host *shost,
  * Currently we just set the fixed SAS address to our HBA, for manufacture,
  * it should read from the EEPROM
  */
-static void pm8001_init_sas_add(struct pm8001_hba_info *pm8001_ha)
+static int pm8001_init_sas_add(struct pm8001_hba_info *pm8001_ha)
 {
 	u8 i, j;
 	u8 sas_add[8];
@@ -668,6 +677,12 @@ static void pm8001_init_sas_add(struct pm8001_hba_info *pm8001_ha)
 	struct pm8001_ioctl_payload payload;
 	u16 deviceid;
 	int rc;
+	unsigned long time_remaining;
+
+	if (PM8001_CHIP_DISP->fatal_errors(pm8001_ha)) {
+		pm8001_dbg(pm8001_ha, FAIL, "controller is in fatal error state\n");
+		return -EIO;
+	}
 
 	pci_read_config_word(pm8001_ha->pdev, PCI_DEVICE_ID, &deviceid);
 	pm8001_ha->nvmd_completion = &completion;
@@ -692,16 +707,23 @@ static void pm8001_init_sas_add(struct pm8001_hba_info *pm8001_ha)
 	payload.offset = 0;
 	payload.func_specific = kzalloc(payload.rd_length, GFP_KERNEL);
 	if (!payload.func_specific) {
-		pm8001_dbg(pm8001_ha, INIT, "mem alloc fail\n");
-		return;
+		pm8001_dbg(pm8001_ha, FAIL, "mem alloc fail\n");
+		return -ENOMEM;
 	}
 	rc = PM8001_CHIP_DISP->get_nvmd_req(pm8001_ha, &payload);
 	if (rc) {
 		kfree(payload.func_specific);
-		pm8001_dbg(pm8001_ha, INIT, "nvmd failed\n");
-		return;
+		pm8001_dbg(pm8001_ha, FAIL, "nvmd failed\n");
+		return -EIO;
 	}
-	wait_for_completion(&completion);
+	time_remaining = wait_for_completion_timeout(&completion,
+				msecs_to_jiffies(60*1000)); // 1 min
+	if (!time_remaining) {
+		kfree(payload.func_specific);
+		pm8001_dbg(pm8001_ha, FAIL, "get_nvmd_req timeout\n");
+		return -EIO;
+	}
+
 
 	for (i = 0, j = 0; i <= 7; i++, j++) {
 		if (pm8001_ha->chip_id == chip_8001) {
@@ -740,6 +762,7 @@ static void pm8001_init_sas_add(struct pm8001_hba_info *pm8001_ha)
 	memcpy(pm8001_ha->sas_addr, &pm8001_ha->phy[0].dev_sas_addr,
 		SAS_ADDR_SIZE);
 #endif
+	return 0;
 }
 
 /*
@@ -931,31 +954,35 @@ static int pm8001_configure_phy_settings(struct pm8001_hba_info *pm8001_ha)
  */
 static u32 pm8001_setup_msix(struct pm8001_hba_info *pm8001_ha)
 {
-	u32 number_of_intr;
-	int rc, cpu_online_count;
 	unsigned int allocated_irq_vectors;
+	int rc;
 
 	/* SPCv controllers supports 64 msi-x */
 	if (pm8001_ha->chip_id == chip_8001) {
-		number_of_intr = 1;
+		rc = pci_alloc_irq_vectors(pm8001_ha->pdev, 1, 1,
+					   PCI_IRQ_MSIX);
 	} else {
-		number_of_intr = PM8001_MAX_MSIX_VEC;
+		/*
+		 * Queue index #0 is used always for housekeeping, so don't
+		 * include in the affinity spreading.
+		 */
+		struct irq_affinity desc = {
+			.pre_vectors = 1,
+		};
+		rc = pci_alloc_irq_vectors_affinity(
+				pm8001_ha->pdev, 2, PM8001_MAX_MSIX_VEC,
+				PCI_IRQ_MSIX | PCI_IRQ_AFFINITY, &desc);
 	}
 
-	cpu_online_count = num_online_cpus();
-	number_of_intr = min_t(int, cpu_online_count, number_of_intr);
-	rc = pci_alloc_irq_vectors(pm8001_ha->pdev, number_of_intr,
-			number_of_intr, PCI_IRQ_MSIX);
 	allocated_irq_vectors = rc;
 	if (rc < 0)
 		return rc;
 
 	/* Assigns the number of interrupts */
-	number_of_intr = min_t(int, allocated_irq_vectors, number_of_intr);
-	pm8001_ha->number_of_intr = number_of_intr;
+	pm8001_ha->number_of_intr = allocated_irq_vectors;
 
 	/* Maximum queue number updating in HBA structure */
-	pm8001_ha->max_q_num = number_of_intr;
+	pm8001_ha->max_q_num = allocated_irq_vectors;
 
 	pm8001_dbg(pm8001_ha, INIT,
 		   "pci_alloc_irq_vectors request ret:%d no of intr %d\n",
@@ -1122,9 +1149,22 @@ static int pm8001_pci_probe(struct pci_dev *pdev,
 		goto err_out_ha_free;
 	}
 
-	rc = pm8001_init_ccb_tag(pm8001_ha, shost, pdev);
+	rc = pm8001_init_ccb_tag(pm8001_ha);
 	if (rc)
 		goto err_out_enable;
+
+
+	PM8001_CHIP_DISP->chip_post_init(pm8001_ha);
+
+	if (pm8001_ha->number_of_intr > 1) {
+		shost->nr_hw_queues = pm8001_ha->number_of_intr - 1;
+		/*
+		 * For now, ensure we're not sent too many commands by setting
+		 * host_tagset. This is also required if we start using request
+		 * tag.
+		 */
+		shost->host_tagset = 1;
+	}
 
 	rc = scsi_add_host(shost, &pdev->dev);
 	if (rc)
@@ -1138,7 +1178,9 @@ static int pm8001_pci_probe(struct pci_dev *pdev,
 		pm80xx_set_thermal_config(pm8001_ha);
 	}
 
-	pm8001_init_sas_add(pm8001_ha);
+	rc = pm8001_init_sas_add(pm8001_ha);
+	if (rc)
+		goto err_out_shost;
 	/* phy setting support for motherboard controller */
 	rc = pm8001_configure_phy_settings(pm8001_ha);
 	if (rc)
@@ -1175,26 +1217,21 @@ err_out_enable:
 /**
  * pm8001_init_ccb_tag - allocate memory to CCB and tag.
  * @pm8001_ha: our hba card information.
- * @shost: scsi host which has been allocated outside.
- * @pdev: pci device.
  */
-static int
-pm8001_init_ccb_tag(struct pm8001_hba_info *pm8001_ha, struct Scsi_Host *shost,
-			struct pci_dev *pdev)
+static int pm8001_init_ccb_tag(struct pm8001_hba_info *pm8001_ha)
 {
-	int i = 0;
+	struct Scsi_Host *shost = pm8001_ha->shost;
+	struct device *dev = pm8001_ha->dev;
 	u32 max_out_io, ccb_count;
-	u32 can_queue;
+	int i;
 
 	max_out_io = pm8001_ha->main_cfg_tbl.pm80xx_tbl.max_out_io;
 	ccb_count = min_t(int, PM8001_MAX_CCB, max_out_io);
 
-	/* Update to the scsi host*/
-	can_queue = ccb_count - PM8001_RESERVE_SLOT;
-	shost->can_queue = can_queue;
+	shost->can_queue = ccb_count - PM8001_RESERVE_SLOT;
 
-	pm8001_ha->tags = bitmap_zalloc(ccb_count, GFP_KERNEL);
-	if (!pm8001_ha->tags)
+	pm8001_ha->rsvd_tags = bitmap_zalloc(PM8001_RESERVE_SLOT, GFP_KERNEL);
+	if (!pm8001_ha->rsvd_tags)
 		goto err_out;
 
 	/* Memory region for ccb_info*/
@@ -1207,7 +1244,7 @@ pm8001_init_ccb_tag(struct pm8001_hba_info *pm8001_ha, struct Scsi_Host *shost,
 		goto err_out_noccb;
 	}
 	for (i = 0; i < ccb_count; i++) {
-		pm8001_ha->ccb_info[i].buf_prd = dma_alloc_coherent(&pdev->dev,
+		pm8001_ha->ccb_info[i].buf_prd = dma_alloc_coherent(dev,
 				sizeof(struct pm8001_prd) * PM8001_MAX_DMA_SG,
 				&pm8001_ha->ccb_info[i].ccb_dma_handle,
 				GFP_KERNEL);
@@ -1219,7 +1256,6 @@ pm8001_init_ccb_tag(struct pm8001_hba_info *pm8001_ha, struct Scsi_Host *shost,
 		pm8001_ha->ccb_info[i].task = NULL;
 		pm8001_ha->ccb_info[i].ccb_tag = PM8001_INVALID_TAG;
 		pm8001_ha->ccb_info[i].device = NULL;
-		++pm8001_ha->tags_num;
 	}
 
 	return 0;

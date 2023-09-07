@@ -10,6 +10,14 @@
 
 #define NPC_KEX_CHAN_MASK	0xFFFULL
 
+#define SET_KEX_LD(intf, lid, ltype, ld, cfg)	\
+	rvu_write64(rvu, blkaddr,	\
+		    NPC_AF_INTFX_LIDX_LTX_LDX_CFG(intf, lid, ltype, ld), cfg)
+
+#define SET_KEX_LDFLAGS(intf, ld, flags, cfg)	\
+	rvu_write64(rvu, blkaddr,	\
+		    NPC_AF_INTFX_LDATAX_FLAGSX_CFG(intf, ld, flags), cfg)
+
 enum NPC_LID_E {
 	NPC_LID_LA = 0,
 	NPC_LID_LB,
@@ -176,9 +184,12 @@ enum key_fields {
 	NPC_VLAN_ETYPE_CTAG, /* 0x8100 */
 	NPC_VLAN_ETYPE_STAG, /* 0x88A8 */
 	NPC_OUTER_VID,
+	NPC_INNER_VID,
 	NPC_TOS,
+	NPC_IPFRAG_IPV4,
 	NPC_SIP_IPV4,
 	NPC_DIP_IPV4,
+	NPC_IPFRAG_IPV6,
 	NPC_SIP_IPV6,
 	NPC_DIP_IPV6,
 	NPC_IPPROTO_TCP,
@@ -194,12 +205,14 @@ enum key_fields {
 	NPC_DPORT_UDP,
 	NPC_SPORT_SCTP,
 	NPC_DPORT_SCTP,
+	NPC_IPSEC_SPI,
 	NPC_HEADER_FIELDS_MAX,
 	NPC_CHAN = NPC_HEADER_FIELDS_MAX, /* Valid when Rx */
 	NPC_PF_FUNC, /* Valid when Tx */
 	NPC_ERRLEV,
 	NPC_ERRCODE,
 	NPC_LXMB,
+	NPC_EXACT_RESULT,
 	NPC_LA,
 	NPC_LB,
 	NPC_LC,
@@ -218,6 +231,8 @@ enum key_fields {
 	NPC_VLAN_TAG1,
 	/* outer vlan tci for double tagged frame */
 	NPC_VLAN_TAG2,
+	/* inner vlan tci for double tagged frame */
+	NPC_VLAN_TAG3,
 	/* other header fields programmed to extract but not of our interest */
 	NPC_UNKNOWN,
 	NPC_KEY_FIELDS_MAX,
@@ -379,6 +394,22 @@ struct nix_rx_action {
 	u64	rsvd_63_61	:3;
 #endif
 };
+
+/* NPC_AF_INTFX_KEX_CFG field masks */
+#define NPC_EXACT_NIBBLE_START		40
+#define NPC_EXACT_NIBBLE_END		43
+#define NPC_EXACT_NIBBLE		GENMASK_ULL(43, 40)
+
+/* NPC_EXACT_KEX_S nibble definitions for each field */
+#define NPC_EXACT_NIBBLE_HIT		BIT_ULL(40)
+#define NPC_EXACT_NIBBLE_OPC		BIT_ULL(40)
+#define NPC_EXACT_NIBBLE_WAY		BIT_ULL(40)
+#define NPC_EXACT_NIBBLE_INDEX		GENMASK_ULL(43, 41)
+
+#define NPC_EXACT_RESULT_HIT		BIT_ULL(0)
+#define NPC_EXACT_RESULT_OPC		GENMASK_ULL(2, 1)
+#define NPC_EXACT_RESULT_WAY		GENMASK_ULL(4, 3)
+#define NPC_EXACT_RESULT_IDX		GENMASK_ULL(15, 5)
 
 /* NPC_AF_INTFX_KEX_CFG field masks */
 #define NPC_PARSE_NIBBLE		GENMASK_ULL(30, 0)
@@ -595,6 +626,7 @@ struct rvu_npc_mcam_rule {
 	bool vfvlan_cfg;
 	u16 chan;
 	u16 chan_mask;
+	u8 lxmb;
 };
 
 #endif /* NPC_H */

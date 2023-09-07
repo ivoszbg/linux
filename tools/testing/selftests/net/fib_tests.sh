@@ -9,13 +9,16 @@ ret=0
 ksft_skip=4
 
 # all tests in this script. Can be overridden with -t option
-TESTS="unregister down carrier nexthop suppress ipv6_rt ipv4_rt ipv6_addr_metric ipv4_addr_metric ipv6_route_metrics ipv4_route_metrics ipv4_route_v6_gw rp_filter ipv4_del_addr ipv4_mangle ipv6_mangle ipv4_bcast_neigh"
+TESTS="unregister down carrier nexthop suppress ipv6_notify ipv4_notify \
+       ipv6_rt ipv4_rt ipv6_addr_metric ipv4_addr_metric ipv6_route_metrics \
+       ipv4_route_metrics ipv4_route_v6_gw rp_filter ipv4_del_addr \
+       ipv6_del_addr ipv4_mangle ipv6_mangle ipv4_bcast_neigh fib6_gc_test"
 
 VERBOSE=0
 PAUSE_ON_FAIL=no
 PAUSE=no
-IP="ip -netns ns1"
-NS_EXEC="ip netns exec ns1"
+IP="$(which ip) -netns ns1"
+NS_EXEC="$(which ip) netns exec ns1"
 
 which ping6 > /dev/null 2>&1 && ping6=$(which ping6) || ping6=$(which ping)
 
@@ -68,7 +71,7 @@ setup()
 cleanup()
 {
 	$IP link del dev dummy0 &> /dev/null
-	ip netns del ns1
+	ip netns del ns1 &> /dev/null
 	ip netns del ns2 &> /dev/null
 }
 
@@ -653,6 +656,160 @@ fib_nexthop_test()
 	$IP link del red
 	) 2>/dev/null
 	cleanup
+}
+
+fib6_notify_test()
+{
+	setup
+
+	echo
+	echo "Fib6 info length calculation in route notify test"
+	set -e
+
+	for i in 10 20 30 40 50 60 70;
+	do
+		$IP link add dummy_$i type dummy
+		$IP link set dev dummy_$i up
+		$IP -6 address add 2001:$i::1/64 dev dummy_$i
+	done
+
+	$NS_EXEC ip monitor route &> errors.txt &
+	sleep 2
+
+	$IP -6 route add 2001::/64 \
+                nexthop via 2001:10::2 dev dummy_10 \
+                nexthop encap ip6 dst 2002::20 via 2001:20::2 dev dummy_20 \
+                nexthop encap ip6 dst 2002::30 via 2001:30::2 dev dummy_30 \
+                nexthop encap ip6 dst 2002::40 via 2001:40::2 dev dummy_40 \
+                nexthop encap ip6 dst 2002::50 via 2001:50::2 dev dummy_50 \
+                nexthop encap ip6 dst 2002::60 via 2001:60::2 dev dummy_60 \
+                nexthop encap ip6 dst 2002::70 via 2001:70::2 dev dummy_70
+
+	set +e
+
+	err=`cat errors.txt |grep "Message too long"`
+	if [ -z "$err" ];then
+		ret=0
+	else
+		ret=1
+	fi
+
+	log_test $ret 0 "ipv6 route add notify"
+
+	{ kill %% && wait %%; } 2>/dev/null
+
+	#rm errors.txt
+
+	cleanup &> /dev/null
+}
+
+
+fib_notify_test()
+{
+	setup
+
+	echo
+	echo "Fib4 info length calculation in route notify test"
+
+	set -e
+
+	for i in 10 20 30 40 50 60 70;
+	do
+		$IP link add dummy_$i type dummy
+		$IP link set dev dummy_$i up
+		$IP address add 20.20.$i.2/24 dev dummy_$i
+	done
+
+	$NS_EXEC ip monitor route &> errors.txt &
+	sleep 2
+
+        $IP route add 10.0.0.0/24 \
+                nexthop via 20.20.10.1 dev dummy_10 \
+                nexthop encap ip dst 192.168.10.20 via 20.20.20.1 dev dummy_20 \
+                nexthop encap ip dst 192.168.10.30 via 20.20.30.1 dev dummy_30 \
+                nexthop encap ip dst 192.168.10.40 via 20.20.40.1 dev dummy_40 \
+                nexthop encap ip dst 192.168.10.50 via 20.20.50.1 dev dummy_50 \
+                nexthop encap ip dst 192.168.10.60 via 20.20.60.1 dev dummy_60 \
+                nexthop encap ip dst 192.168.10.70 via 20.20.70.1 dev dummy_70
+
+	set +e
+
+	err=`cat errors.txt |grep "Message too long"`
+	if [ -z "$err" ];then
+		ret=0
+	else
+		ret=1
+	fi
+
+	log_test $ret 0 "ipv4 route add notify"
+
+	{ kill %% && wait %%; } 2>/dev/null
+
+	rm  errors.txt
+
+	cleanup &> /dev/null
+}
+
+fib6_gc_test()
+{
+	setup
+
+	echo
+	echo "Fib6 garbage collection test"
+	set -e
+
+	EXPIRE=3
+
+	# Check expiration of routes every $EXPIRE seconds (GC)
+	$NS_EXEC sysctl -wq net.ipv6.route.gc_interval=$EXPIRE
+
+	$IP link add dummy_10 type dummy
+	$IP link set dev dummy_10 up
+	$IP -6 address add 2001:10::1/64 dev dummy_10
+
+	$NS_EXEC sysctl -wq net.ipv6.route.flush=1
+
+	# Temporary routes
+	for i in $(seq 1 1000); do
+	    # Expire route after $EXPIRE seconds
+	    $IP -6 route add 2001:20::$i \
+		via 2001:10::2 dev dummy_10 expires $EXPIRE
+	done
+	sleep $(($EXPIRE * 2))
+	N_EXP_SLEEP=$($IP -6 route list |grep expires|wc -l)
+	if [ $N_EXP_SLEEP -ne 0 ]; then
+	    echo "FAIL: expected 0 routes with expires, got $N_EXP_SLEEP"
+	    ret=1
+	else
+	    ret=0
+	fi
+
+	# Permanent routes
+	for i in $(seq 1 5000); do
+	    $IP -6 route add 2001:30::$i \
+		via 2001:10::2 dev dummy_10
+	done
+	# Temporary routes
+	for i in $(seq 1 1000); do
+	    # Expire route after $EXPIRE seconds
+	    $IP -6 route add 2001:20::$i \
+		via 2001:10::2 dev dummy_10 expires $EXPIRE
+	done
+	sleep $(($EXPIRE * 2))
+	N_EXP_SLEEP=$($IP -6 route list |grep expires|wc -l)
+	if [ $N_EXP_SLEEP -ne 0 ]; then
+	    echo "FAIL: expected 0 routes with expires," \
+		 "got $N_EXP_SLEEP (5000 permanent routes)"
+	    ret=1
+	else
+	    ret=0
+	fi
+
+	set +e
+
+	log_test $ret 0 "ipv6 route garbage collection"
+
+	cleanup &> /dev/null
 }
 
 fib_suppress_test()
@@ -1711,13 +1868,21 @@ ipv4_del_addr_test()
 
 	$IP addr add dev dummy1 172.16.104.1/24
 	$IP addr add dev dummy1 172.16.104.11/24
+	$IP addr add dev dummy1 172.16.104.12/24
+	$IP addr add dev dummy1 172.16.104.13/24
 	$IP addr add dev dummy2 172.16.104.1/24
 	$IP addr add dev dummy2 172.16.104.11/24
+	$IP addr add dev dummy2 172.16.104.12/24
 	$IP route add 172.16.105.0/24 via 172.16.104.2 src 172.16.104.11
+	$IP route add 172.16.106.0/24 dev lo src 172.16.104.12
+	$IP route add table 0 172.16.107.0/24 via 172.16.104.2 src 172.16.104.13
 	$IP route add vrf red 172.16.105.0/24 via 172.16.104.2 src 172.16.104.11
+	$IP route add vrf red 172.16.106.0/24 dev lo src 172.16.104.12
 	set +e
 
 	# removing address from device in vrf should only remove route from vrf table
+	echo "    Regular FIB info"
+
 	$IP addr del dev dummy2 172.16.104.11/24
 	$IP ro ls vrf red | grep -q 172.16.105.0/24
 	log_test $? 1 "Route removed from VRF when source address deleted"
@@ -1735,11 +1900,189 @@ ipv4_del_addr_test()
 	$IP ro ls vrf red | grep -q 172.16.105.0/24
 	log_test $? 0 "Route in VRF is not removed by address delete"
 
+	# removing address from device in vrf should only remove route from vrf
+	# table even when the associated fib info only differs in table ID
+	echo "    Identical FIB info with different table ID"
+
+	$IP addr del dev dummy2 172.16.104.12/24
+	$IP ro ls vrf red | grep -q 172.16.106.0/24
+	log_test $? 1 "Route removed from VRF when source address deleted"
+
+	$IP ro ls | grep -q 172.16.106.0/24
+	log_test $? 0 "Route in default VRF not removed"
+
+	$IP addr add dev dummy2 172.16.104.12/24
+	$IP route add vrf red 172.16.106.0/24 dev lo src 172.16.104.12
+
+	$IP addr del dev dummy1 172.16.104.12/24
+	$IP ro ls | grep -q 172.16.106.0/24
+	log_test $? 1 "Route removed in default VRF when source address deleted"
+
+	$IP ro ls vrf red | grep -q 172.16.106.0/24
+	log_test $? 0 "Route in VRF is not removed by address delete"
+
+	# removing address from device in default vrf should remove route from
+	# the default vrf even when route was inserted with a table ID of 0.
+	echo "    Table ID 0"
+
+	$IP addr del dev dummy1 172.16.104.13/24
+	$IP ro ls | grep -q 172.16.107.0/24
+	log_test $? 1 "Route removed in default VRF when source address deleted"
+
 	$IP li del dummy1
 	$IP li del dummy2
 	cleanup
 }
 
+ipv6_del_addr_test()
+{
+	echo
+	echo "IPv6 delete address route tests"
+
+	setup
+
+	set -e
+	for i in $(seq 6); do
+		$IP li add dummy${i} up type dummy
+	done
+
+	$IP li add red up type vrf table 1111
+	$IP ro add vrf red unreachable default
+	for i in $(seq 4 6); do
+		$IP li set dummy${i} vrf red
+	done
+
+	$IP addr add dev dummy1 fe80::1/128
+	$IP addr add dev dummy1 2001:db8:101::1/64
+	$IP addr add dev dummy1 2001:db8:101::10/64
+	$IP addr add dev dummy1 2001:db8:101::11/64
+	$IP addr add dev dummy1 2001:db8:101::12/64
+	$IP addr add dev dummy1 2001:db8:101::13/64
+	$IP addr add dev dummy1 2001:db8:101::14/64
+	$IP addr add dev dummy1 2001:db8:101::15/64
+	$IP addr add dev dummy2 fe80::1/128
+	$IP addr add dev dummy2 2001:db8:101::1/64
+	$IP addr add dev dummy2 2001:db8:101::11/64
+	$IP addr add dev dummy3 fe80::1/128
+
+	$IP addr add dev dummy4 2001:db8:101::1/64
+	$IP addr add dev dummy4 2001:db8:101::10/64
+	$IP addr add dev dummy4 2001:db8:101::11/64
+	$IP addr add dev dummy4 2001:db8:101::12/64
+	$IP addr add dev dummy4 2001:db8:101::13/64
+	$IP addr add dev dummy4 2001:db8:101::14/64
+	$IP addr add dev dummy5 2001:db8:101::1/64
+	$IP addr add dev dummy5 2001:db8:101::11/64
+
+	# Single device using src address
+	$IP route add 2001:db8:110::/64 dev dummy3 src 2001:db8:101::10
+	# Two devices with the same source address
+	$IP route add 2001:db8:111::/64 dev dummy3 src 2001:db8:101::11
+	# VRF with single device using src address
+	$IP route add vrf red 2001:db8:110::/64 dev dummy6 src 2001:db8:101::10
+	# VRF with two devices using src address
+	$IP route add vrf red 2001:db8:111::/64 dev dummy6 src 2001:db8:101::11
+	# src address and nexthop dev in same VRF
+	$IP route add 2001:db8:112::/64 dev dummy3 src 2001:db8:101::12
+	$IP route add vrf red 2001:db8:112::/64 dev dummy6 src 2001:db8:101::12
+	# src address and nexthop device in different VRF
+	$IP route add 2001:db8:113::/64 dev lo src 2001:db8:101::13
+	$IP route add vrf red 2001:db8:113::/64 dev lo src 2001:db8:101::13
+	# table ID 0
+	$IP route add table 0 2001:db8:115::/64 via 2001:db8:101::2 src 2001:db8:101::15
+	# Link local source route
+	$IP route add 2001:db8:116::/64 dev dummy2 src fe80::1
+	$IP route add 2001:db8:117::/64 dev dummy3 src fe80::1
+	set +e
+
+	echo "    Single device using src address"
+
+	$IP addr del dev dummy1 2001:db8:101::10/64
+	$IP -6 route show | grep -q "src 2001:db8:101::10 "
+	log_test $? 1 "Prefsrc removed when src address removed on other device"
+
+	echo "    Two devices with the same source address"
+
+	$IP addr del dev dummy1 2001:db8:101::11/64
+	$IP -6 route show | grep -q "src 2001:db8:101::11 "
+	log_test $? 0 "Prefsrc not removed when src address exist on other device"
+
+	$IP addr del dev dummy2 2001:db8:101::11/64
+	$IP -6 route show | grep -q "src 2001:db8:101::11 "
+	log_test $? 1 "Prefsrc removed when src address removed on all devices"
+
+	echo "    VRF with single device using src address"
+
+	$IP addr del dev dummy4 2001:db8:101::10/64
+	$IP -6 route show vrf red | grep -q "src 2001:db8:101::10 "
+	log_test $? 1 "Prefsrc removed when src address removed on other device"
+
+	echo "    VRF with two devices using src address"
+
+	$IP addr del dev dummy4 2001:db8:101::11/64
+	$IP -6 route show vrf red | grep -q "src 2001:db8:101::11 "
+	log_test $? 0 "Prefsrc not removed when src address exist on other device"
+
+	$IP addr del dev dummy5 2001:db8:101::11/64
+	$IP -6 route show vrf red | grep -q "src 2001:db8:101::11 "
+	log_test $? 1 "Prefsrc removed when src address removed on all devices"
+
+	echo "    src address and nexthop dev in same VRF"
+
+	$IP addr del dev dummy4 2001:db8:101::12/64
+	$IP -6 route show vrf red | grep -q "src 2001:db8:101::12 "
+	log_test $? 1 "Prefsrc removed from VRF when source address deleted"
+	$IP -6 route show | grep -q " src 2001:db8:101::12 "
+	log_test $? 0 "Prefsrc in default VRF not removed"
+
+	$IP addr add dev dummy4 2001:db8:101::12/64
+	$IP route replace vrf red 2001:db8:112::/64 dev dummy6 src 2001:db8:101::12
+	$IP addr del dev dummy1 2001:db8:101::12/64
+	$IP -6 route show vrf red | grep -q "src 2001:db8:101::12 "
+	log_test $? 0 "Prefsrc not removed from VRF when source address exist"
+	$IP -6 route show | grep -q " src 2001:db8:101::12 "
+	log_test $? 1 "Prefsrc in default VRF removed"
+
+	echo "    src address and nexthop device in different VRF"
+
+	$IP addr del dev dummy4 2001:db8:101::13/64
+	$IP -6 route show vrf red | grep -q "src 2001:db8:101::13 "
+	log_test $? 0 "Prefsrc not removed from VRF when nexthop dev in diff VRF"
+	$IP -6 route show | grep -q "src 2001:db8:101::13 "
+	log_test $? 0 "Prefsrc not removed in default VRF"
+
+	$IP addr add dev dummy4 2001:db8:101::13/64
+	$IP addr del dev dummy1 2001:db8:101::13/64
+	$IP -6 route show vrf red | grep -q "src 2001:db8:101::13 "
+	log_test $? 1 "Prefsrc removed from VRF when nexthop dev in diff VRF"
+	$IP -6 route show | grep -q "src 2001:db8:101::13 "
+	log_test $? 1 "Prefsrc removed in default VRF"
+
+	echo "    Table ID 0"
+
+	$IP addr del dev dummy1 2001:db8:101::15/64
+	$IP -6 route show | grep -q "src 2001:db8:101::15"
+	log_test $? 1 "Prefsrc removed from default VRF when source address deleted"
+
+	echo "    Link local source route"
+	$IP addr del dev dummy1 fe80::1/128
+	$IP -6 route show | grep -q "2001:db8:116::/64 dev dummy2 src fe80::1"
+	log_test $? 0 "Prefsrc not removed when delete ll addr from other dev"
+	$IP addr del dev dummy2 fe80::1/128
+	$IP -6 route show | grep -q "2001:db8:116::/64 dev dummy2 src fe80::1"
+	log_test $? 1 "Prefsrc removed when delete ll addr"
+	$IP -6 route show | grep -q "2001:db8:117::/64 dev dummy3 src fe80::1"
+	log_test $? 0 "Prefsrc not removed when delete ll addr from other dev"
+	$IP addr add dev dummy1 fe80::1/128
+	$IP addr del dev dummy3 fe80::1/128
+	$IP -6 route show | grep -q "2001:db8:117::/64 dev dummy3 src fe80::1"
+	log_test $? 1 "Prefsrc removed even ll addr still exist on other dev"
+
+	for i in $(seq 6); do
+		$IP li del dummy${i}
+	done
+	cleanup
+}
 
 ipv4_route_v6_gw_test()
 {
@@ -2028,6 +2371,8 @@ EOF
 ################################################################################
 # main
 
+trap cleanup EXIT
+
 while getopts :t:pPhv o
 do
 	case $o in
@@ -2072,18 +2417,22 @@ do
 	fib_carrier_test|carrier)	fib_carrier_test;;
 	fib_rp_filter_test|rp_filter)	fib_rp_filter_test;;
 	fib_nexthop_test|nexthop)	fib_nexthop_test;;
+	fib_notify_test|ipv4_notify)	fib_notify_test;;
+	fib6_notify_test|ipv6_notify)	fib6_notify_test;;
 	fib_suppress_test|suppress)	fib_suppress_test;;
 	ipv6_route_test|ipv6_rt)	ipv6_route_test;;
 	ipv4_route_test|ipv4_rt)	ipv4_route_test;;
 	ipv6_addr_metric)		ipv6_addr_metric_test;;
 	ipv4_addr_metric)		ipv4_addr_metric_test;;
 	ipv4_del_addr)			ipv4_del_addr_test;;
+	ipv6_del_addr)			ipv6_del_addr_test;;
 	ipv6_route_metrics)		ipv6_route_metrics_test;;
 	ipv4_route_metrics)		ipv4_route_metrics_test;;
 	ipv4_route_v6_gw)		ipv4_route_v6_gw_test;;
 	ipv4_mangle)			ipv4_mangle_test;;
 	ipv6_mangle)			ipv6_mangle_test;;
 	ipv4_bcast_neigh)		ipv4_bcast_neigh_test;;
+	fib6_gc_test|ipv6_gc)		fib6_gc_test;;
 
 	help) echo "Test names: $TESTS"; exit 0;;
 	esac

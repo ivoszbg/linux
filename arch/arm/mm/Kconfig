@@ -403,7 +403,7 @@ config CPU_V6K
 	select CPU_THUMB_CAPABLE
 	select CPU_TLB_V6 if MMU
 
-# ARMv7
+# ARMv7 and ARMv8 architectures
 config CPU_V7
 	bool
 	select CPU_32v6K
@@ -631,7 +631,11 @@ config CPU_USE_DOMAINS
 	bool
 	help
 	  This option enables or disables the use of domain switching
-	  via the set_fs() function.
+	  using the DACR (domain access control register) to protect memory
+	  domains from each other. In Linux we use three domains: kernel, user
+	  and IO. The domains are used to protect userspace from kernelspace
+	  and to handle IO-space as a special type of memory by assigning
+	  manager or client roles to running code (such as a process).
 
 config CPU_V7M_NUM_IRQ
 	int "Number of external interrupts connected to the NVIC"
@@ -708,7 +712,7 @@ config ARM_VIRT_EXT
 	  assistance.
 
 	  A compliant bootloader is required in order to make maximum
-	  use of this feature.  Refer to Documentation/arm/booting.rst for
+	  use of this feature.  Refer to Documentation/arch/arm/booting.rst for
 	  details.
 
 config SWP_EMULATE
@@ -739,7 +743,7 @@ config SWP_EMULATE
 	  If unsure, say Y.
 
 choice
-	prompt "CPU Endianess"
+	prompt "CPU Endianness"
 	default CPU_LITTLE_ENDIAN
 
 config CPU_LITTLE_ENDIAN
@@ -900,7 +904,7 @@ config KUSER_HELPERS
 	  the CPU type fitted to the system.  This permits binaries to be
 	  run on ARMv4 through to ARMv7 without modification.
 
-	  See Documentation/arm/kernel_user_helpers.rst for details.
+	  See Documentation/arch/arm/kernel_user_helpers.rst for details.
 
 	  However, the fixed address nature of these helpers can be used
 	  by ROP (return orientated programming) authors when creating

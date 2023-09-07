@@ -315,16 +315,14 @@ snd_emu10k1_alloc_pages(struct snd_emu10k1 *emu, struct snd_pcm_substream *subst
 	if (snd_BUG_ON(!hdr))
 		return NULL;
 
-	idx = runtime->period_size >= runtime->buffer_size ?
-					(emu->delay_pcm_irq * 2) : 0;
 	mutex_lock(&hdr->block_mutex);
-	blk = search_empty(emu, runtime->dma_bytes + idx);
+	blk = search_empty(emu, runtime->dma_bytes);
 	if (blk == NULL) {
 		mutex_unlock(&hdr->block_mutex);
 		return NULL;
 	}
 	/* fill buffer addresses but pointers are not stored so that
-	 * snd_free_pci_page() is not called in in synth_free()
+	 * snd_free_pci_page() is not called in synth_free()
 	 */
 	idx = 0;
 	for (page = blk->first_page; page <= blk->last_page; page++, idx++) {

@@ -35,9 +35,6 @@
   *  - Arnaldo Carvalho de Melo <acme@conectiva.com.br>
   */
 
-#define ARCH_HAS_IOREMAP_WC
-#define ARCH_HAS_IOREMAP_WT
-
 #include <linux/string.h>
 #include <linux/compiler.h>
 #include <linux/cc_platform.h>
@@ -170,15 +167,6 @@ static inline unsigned int isa_virt_to_bus(volatile void *address)
 #define isa_bus_to_virt		phys_to_virt
 
 /*
- * However PCI ones are not necessarily 1:1 and therefore these interfaces
- * are forbidden in portable PCI drivers.
- *
- * Allow them on x86 for legacy drivers, though.
- */
-#define virt_to_bus virt_to_phys
-#define bus_to_virt phys_to_virt
-
-/*
  * The default ioremap() behavior is non-cached; if you need something
  * else, you probably want one of the following.
  */
@@ -220,8 +208,6 @@ void memset_io(volatile void __iomem *, int, size_t);
 #define memcpy_fromio memcpy_fromio
 #define memcpy_toio memcpy_toio
 #define memset_io memset_io
-
-#include <asm-generic/iomap.h>
 
 /*
  * ISA space is 'always mapped' on a typical x86 system, no need to

@@ -164,18 +164,6 @@
 /*
  * Values for PageMask register
  */
-#ifdef CONFIG_CPU_VR41XX
-
-/* Why doesn't stupidity hurt ... */
-
-#define PM_1K		0x00000000
-#define PM_4K		0x00001800
-#define PM_16K		0x00007800
-#define PM_64K		0x0001f800
-#define PM_256K		0x0007f800
-
-#else
-
 #define PM_4K		0x00000000
 #define PM_8K		0x00002000
 #define PM_16K		0x00006000
@@ -193,8 +181,6 @@
 #define PM_64M		0x07ffe000
 #define PM_256M		0x1fffe000
 #define PM_1G		0x7fffe000
-
-#endif
 
 /*
  * Default page size for a given kernel configuration
@@ -2381,7 +2367,7 @@ do {									\
 /*
  * Macros to access the floating point coprocessor control registers
  */
-#define _read_32bit_cp1_register(source, gas_hardfloat)			\
+#define read_32bit_cp1_register(source)					\
 ({									\
 	unsigned int __res;						\
 									\
@@ -2391,35 +2377,23 @@ do {									\
 	"	# gas fails to assemble cfc1 for some archs,	\n"	\
 	"	# like Octeon.					\n"	\
 	"	.set	mips1					\n"	\
-	"	"STR(gas_hardfloat)"				\n"	\
+	"	.set hardfloat					\n"	\
 	"	cfc1	%0,"STR(source)"			\n"	\
 	"	.set	pop					\n"	\
 	: "=r" (__res));						\
 	__res;								\
 })
 
-#define _write_32bit_cp1_register(dest, val, gas_hardfloat)		\
+#define write_32bit_cp1_register(dest, val)				\
 do {									\
 	__asm__ __volatile__(						\
 	"	.set	push					\n"	\
 	"	.set	reorder					\n"	\
-	"	"STR(gas_hardfloat)"				\n"	\
+	"	.set hardfloat					\n"	\
 	"	ctc1	%0,"STR(dest)"				\n"	\
 	"	.set	pop					\n"	\
 	: : "r" (val));							\
 } while (0)
-
-#ifdef GAS_HAS_SET_HARDFLOAT
-#define read_32bit_cp1_register(source)					\
-	_read_32bit_cp1_register(source, .set hardfloat)
-#define write_32bit_cp1_register(dest, val)				\
-	_write_32bit_cp1_register(dest, val, .set hardfloat)
-#else
-#define read_32bit_cp1_register(source)					\
-	_read_32bit_cp1_register(source, )
-#define write_32bit_cp1_register(dest, val)				\
-	_write_32bit_cp1_register(dest, val, )
-#endif
 
 #ifdef TOOLCHAIN_SUPPORTS_DSP
 #define rddsp(mask)							\

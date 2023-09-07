@@ -12,11 +12,10 @@
 #include <linux/init.h>
 #include <linux/delay.h>
 #include <linux/pm.h>
-#include <linux/gpio.h>
+#include <linux/gpio/consumer.h>
 #include <linux/i2c.h>
 #include <linux/regmap.h>
 #include <linux/of.h>
-#include <linux/of_gpio.h>
 #include <linux/platform_device.h>
 #include <linux/spi/spi.h>
 #include <linux/acpi.h>
@@ -53,7 +52,6 @@ static const struct reg_sequence init_list[] = {
 	{RT5640_PR_BASE + 0x3d,	0x3600},
 	{RT5640_PR_BASE + 0x12,	0x0aa8},
 	{RT5640_PR_BASE + 0x14,	0x0aaa},
-	{RT5640_PR_BASE + 0x20,	0x6110},
 	{RT5640_PR_BASE + 0x21,	0xe0e0},
 	{RT5640_PR_BASE + 0x23,	0x1804},
 };
@@ -1838,9 +1836,14 @@ static int rt5640_set_dai_sysclk(struct snd_soc_dai *dai,
 	struct rt5640_priv *rt5640 = snd_soc_component_get_drvdata(component);
 	unsigned int reg_val = 0;
 	unsigned int pll_bit = 0;
+	int ret;
 
 	switch (clk_id) {
 	case RT5640_SCLK_S_MCLK:
+		ret = clk_set_rate(rt5640->mclk, freq);
+		if (ret)
+			return ret;
+
 		reg_val |= RT5640_SCLK_SRC_MCLK;
 		break;
 	case RT5640_SCLK_S_PLL1:
@@ -1984,7 +1987,12 @@ static int rt5640_set_bias_level(struct snd_soc_component *component,
 		snd_soc_component_write(component, RT5640_PWR_DIG2, 0x0000);
 		snd_soc_component_write(component, RT5640_PWR_VOL, 0x0000);
 		snd_soc_component_write(component, RT5640_PWR_MIXER, 0x0000);
-		snd_soc_component_write(component, RT5640_PWR_ANLG1, 0x0000);
+		if (rt5640->jd_src == RT5640_JD_SRC_HDA_HEADER)
+			snd_soc_component_write(component, RT5640_PWR_ANLG1,
+				0x2818);
+		else
+			snd_soc_component_write(component, RT5640_PWR_ANLG1,
+				0x0000);
 		snd_soc_component_write(component, RT5640_PWR_ANLG2, 0x0000);
 		break;
 
@@ -2393,9 +2401,15 @@ static void rt5640_jack_work(struct work_struct *work)
 static irqreturn_t rt5640_irq(int irq, void *data)
 {
 	struct rt5640_priv *rt5640 = data;
+	int delay = 0;
+
+	if (rt5640->jd_src == RT5640_JD_SRC_HDA_HEADER) {
+		cancel_delayed_work_sync(&rt5640->jack_work);
+		delay = 100;
+	}
 
 	if (rt5640->jack)
-		queue_delayed_work(system_long_wq, &rt5640->jack_work, 0);
+		queue_delayed_work(system_long_wq, &rt5640->jack_work, delay);
 
 	return IRQ_HANDLED;
 }
@@ -2483,7 +2497,7 @@ static void rt5640_enable_jack_detect(struct snd_soc_component *component,
 
 	/* Select JD-source */
 	snd_soc_component_update_bits(component, RT5640_JD_CTRL,
-		RT5640_JD_MASK, rt5640->jd_src);
+		RT5640_JD_MASK, rt5640->jd_src << RT5640_JD_SFT);
 
 	/* Selecting GPIO01 as an interrupt */
 	snd_soc_component_update_bits(component, RT5640_GPIO_CTRL1,
@@ -2493,11 +2507,7 @@ static void rt5640_enable_jack_detect(struct snd_soc_component *component,
 	snd_soc_component_update_bits(component, RT5640_GPIO_CTRL3,
 		RT5640_GP1_PF_MASK, RT5640_GP1_PF_OUT);
 
-	/* Enabling jd2 in general control 1 */
 	snd_soc_component_write(component, RT5640_DUMMY1, 0x3f41);
-
-	/* Enabling jd2 in general control 2 */
-	snd_soc_component_write(component, RT5640_DUMMY2, 0x4001);
 
 	rt5640_set_ovcd_params(component);
 
@@ -2507,12 +2517,25 @@ static void rt5640_enable_jack_detect(struct snd_soc_component *component,
 	 * pin 0/1 instead of it being stuck to 1. So we invert the JD polarity
 	 * on systems where the hardware does not already do this.
 	 */
-	if (rt5640->jd_inverted)
-		snd_soc_component_write(component, RT5640_IRQ_CTRL1,
-					RT5640_IRQ_JD_NOR);
-	else
-		snd_soc_component_write(component, RT5640_IRQ_CTRL1,
-					RT5640_IRQ_JD_NOR | RT5640_JD_P_INV);
+	if (rt5640->jd_inverted) {
+		if (rt5640->jd_src == RT5640_JD_SRC_JD1_IN4P)
+			snd_soc_component_write(component, RT5640_IRQ_CTRL1,
+				RT5640_IRQ_JD_NOR);
+		else if (rt5640->jd_src == RT5640_JD_SRC_JD2_IN4N)
+			snd_soc_component_update_bits(component, RT5640_DUMMY2,
+				RT5640_IRQ_JD2_MASK | RT5640_JD2_MASK,
+				RT5640_IRQ_JD2_NOR | RT5640_JD2_EN);
+	} else {
+		if (rt5640->jd_src == RT5640_JD_SRC_JD1_IN4P)
+			snd_soc_component_write(component, RT5640_IRQ_CTRL1,
+				RT5640_IRQ_JD_NOR | RT5640_JD_P_INV);
+		else if (rt5640->jd_src == RT5640_JD_SRC_JD2_IN4N)
+			snd_soc_component_update_bits(component, RT5640_DUMMY2,
+				RT5640_IRQ_JD2_MASK | RT5640_JD2_P_MASK |
+				RT5640_JD2_MASK,
+				RT5640_IRQ_JD2_NOR | RT5640_JD2_P_INV |
+				RT5640_JD2_EN);
+	}
 
 	rt5640->jack = jack;
 	if (rt5640->jack->status & SND_JACK_MICROPHONE) {
@@ -2542,11 +2565,12 @@ static void rt5640_enable_jack_detect(struct snd_soc_component *component,
 	if (jack_data && jack_data->use_platform_clock)
 		rt5640->use_platform_clock = jack_data->use_platform_clock;
 
-	ret = request_irq(rt5640->irq, rt5640_irq,
-			  IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING | IRQF_ONESHOT,
-			  "rt5640", rt5640);
+	ret = devm_request_threaded_irq(component->dev, rt5640->irq,
+					NULL, rt5640_irq,
+					IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING | IRQF_ONESHOT,
+					"rt5640", rt5640);
 	if (ret) {
-		dev_warn(component->dev, "Failed to reguest IRQ %d: %d\n", rt5640->irq, ret);
+		dev_warn(component->dev, "Failed to request IRQ %d: %d\n", rt5640->irq, ret);
 		rt5640_disable_jack_detect(component);
 		return;
 	}
@@ -2556,10 +2580,18 @@ static void rt5640_enable_jack_detect(struct snd_soc_component *component,
 	queue_delayed_work(system_long_wq, &rt5640->jack_work, 0);
 }
 
+static const struct snd_soc_dapm_route rt5640_hda_jack_dapm_routes[] = {
+	{"IN1P", NULL, "MICBIAS1"},
+	{"IN2P", NULL, "MICBIAS1"},
+	{"IN3P", NULL, "MICBIAS1"},
+};
+
 static void rt5640_enable_hda_jack_detect(
 	struct snd_soc_component *component, struct snd_soc_jack *jack)
 {
 	struct rt5640_priv *rt5640 = snd_soc_component_get_drvdata(component);
+	struct snd_soc_dapm_context *dapm =
+		snd_soc_component_get_dapm(component);
 	int ret;
 
 	/* Select JD1 for Mic */
@@ -2580,18 +2612,29 @@ static void rt5640_enable_hda_jack_detect(
 
 	snd_soc_component_update_bits(component, RT5640_DUMMY1, 0x400, 0x0);
 
+	snd_soc_component_update_bits(component, RT5640_PWR_ANLG1,
+		RT5640_PWR_VREF2 | RT5640_PWR_MB | RT5640_PWR_BG,
+		RT5640_PWR_VREF2 | RT5640_PWR_MB | RT5640_PWR_BG);
+	usleep_range(10000, 15000);
+	snd_soc_component_update_bits(component, RT5640_PWR_ANLG1,
+		RT5640_PWR_FV2, RT5640_PWR_FV2);
+
 	rt5640->jack = jack;
 
-	ret = request_irq(rt5640->irq, rt5640_irq,
-			  IRQF_TRIGGER_RISING | IRQF_ONESHOT, "rt5640", rt5640);
+	ret = devm_request_threaded_irq(component->dev, rt5640->irq,
+					NULL, rt5640_irq, IRQF_TRIGGER_RISING | IRQF_ONESHOT,
+					"rt5640", rt5640);
 	if (ret) {
-		dev_warn(component->dev, "Failed to reguest IRQ %d: %d\n", rt5640->irq, ret);
+		dev_warn(component->dev, "Failed to request IRQ %d: %d\n", rt5640->irq, ret);
 		rt5640->irq = -ENXIO;
 		return;
 	}
 
 	/* sync initial jack state */
 	queue_delayed_work(system_long_wq, &rt5640->jack_work, 0);
+
+	snd_soc_dapm_add_routes(dapm, rt5640_hda_jack_dapm_routes,
+		ARRAY_SIZE(rt5640_hda_jack_dapm_routes));
 }
 
 static int rt5640_set_jack(struct snd_soc_component *component,
@@ -2679,6 +2722,10 @@ static int rt5640_probe(struct snd_soc_component *component)
 		snd_soc_component_update_bits(component, RT5640_IN1_IN2,
 					      RT5640_IN_DF2, RT5640_IN_DF2);
 
+	if (device_property_read_bool(component->dev, "realtek,lout-differential"))
+		snd_soc_component_update_bits(component, RT5640_DUMMY1,
+					      RT5640_EN_LOUT_DF, RT5640_EN_LOUT_DF);
+
 	if (device_property_read_u32(component->dev, "realtek,dmic1-data-pin",
 				     &val) == 0 && val) {
 		dmic1_data_pin = val - 1;
@@ -2696,16 +2743,11 @@ static int rt5640_probe(struct snd_soc_component *component)
 
 	if (device_property_read_u32(component->dev,
 				     "realtek,jack-detect-source", &val) == 0) {
-		if (val <= RT5640_JD_SRC_GPIO4) {
-			rt5640->jd_src = val << RT5640_JD_SFT;
-		} else if (val == RT5640_JD_SRC_HDA_HEADER) {
-			rt5640->jd_src = RT5640_JD_SRC_HDA_HEADER;
-			snd_soc_component_update_bits(component, RT5640_DUMMY1,
-				0x0300, 0x0);
-		} else {
+		if (val <= RT5640_JD_SRC_HDA_HEADER)
+			rt5640->jd_src = val;
+		else
 			dev_warn(component->dev, "Warning: Invalid jack-detect-source value: %d, leaving jack-detect disabled\n",
 				 val);
-		}
 	}
 
 	if (!device_property_read_bool(component->dev, "realtek,jack-detect-not-inverted"))
@@ -2759,13 +2801,18 @@ static int rt5640_suspend(struct snd_soc_component *component)
 {
 	struct rt5640_priv *rt5640 = snd_soc_component_get_drvdata(component);
 
+	if (rt5640->irq) {
+		/* disable jack interrupts during system suspend */
+		disable_irq(rt5640->irq);
+	}
+
 	rt5640_cancel_work(rt5640);
 	snd_soc_component_force_bias_level(component, SND_SOC_BIAS_OFF);
 	rt5640_reset(component);
 	regcache_cache_only(rt5640->regmap, true);
 	regcache_mark_dirty(rt5640->regmap);
-	if (gpio_is_valid(rt5640->ldo1_en))
-		gpio_set_value_cansleep(rt5640->ldo1_en, 0);
+	if (rt5640->ldo1_en)
+		gpiod_set_value_cansleep(rt5640->ldo1_en, 0);
 
 	return 0;
 }
@@ -2774,21 +2821,43 @@ static int rt5640_resume(struct snd_soc_component *component)
 {
 	struct rt5640_priv *rt5640 = snd_soc_component_get_drvdata(component);
 
-	if (gpio_is_valid(rt5640->ldo1_en)) {
-		gpio_set_value_cansleep(rt5640->ldo1_en, 1);
+	if (rt5640->ldo1_en) {
+		gpiod_set_value_cansleep(rt5640->ldo1_en, 1);
 		msleep(400);
 	}
 
 	regcache_cache_only(rt5640->regmap, false);
 	regcache_sync(rt5640->regmap);
 
+	if (rt5640->irq)
+		enable_irq(rt5640->irq);
+
 	if (rt5640->jack) {
-		if (rt5640->jd_src == RT5640_JD_SRC_HDA_HEADER)
+		if (rt5640->jd_src == RT5640_JD_SRC_HDA_HEADER) {
 			snd_soc_component_update_bits(component,
 				RT5640_DUMMY2, 0x1100, 0x1100);
-		else
-			snd_soc_component_write(component, RT5640_DUMMY2,
-				0x4001);
+		} else {
+			if (rt5640->jd_inverted) {
+				if (rt5640->jd_src == RT5640_JD_SRC_JD2_IN4N)
+					snd_soc_component_update_bits(
+						component, RT5640_DUMMY2,
+						RT5640_IRQ_JD2_MASK |
+						RT5640_JD2_MASK,
+						RT5640_IRQ_JD2_NOR |
+						RT5640_JD2_EN);
+
+			} else {
+				if (rt5640->jd_src == RT5640_JD_SRC_JD2_IN4N)
+					snd_soc_component_update_bits(
+						component, RT5640_DUMMY2,
+						RT5640_IRQ_JD2_MASK |
+						RT5640_JD2_P_MASK |
+						RT5640_JD2_MASK,
+						RT5640_IRQ_JD2_NOR |
+						RT5640_JD2_P_INV |
+						RT5640_JD2_EN);
+			}
+		}
 
 		queue_delayed_work(system_long_wq, &rt5640->jack_work, 0);
 	}
@@ -2867,8 +2936,6 @@ static const struct snd_soc_component_driver soc_component_dev_rt5640 = {
 	.num_dapm_routes	= ARRAY_SIZE(rt5640_dapm_routes),
 	.use_pmdown_time	= 1,
 	.endianness		= 1,
-	.non_legacy_dai_naming	= 1,
-
 };
 
 static const struct regmap_config rt5640_regmap = {
@@ -2882,7 +2949,7 @@ static const struct regmap_config rt5640_regmap = {
 	.volatile_reg = rt5640_volatile_register,
 	.readable_reg = rt5640_readable_register,
 
-	.cache_type = REGCACHE_RBTREE,
+	.cache_type = REGCACHE_MAPLE,
 	.reg_defaults = rt5640_reg,
 	.num_reg_defaults = ARRAY_SIZE(rt5640_reg),
 	.ranges = rt5640_ranges,
@@ -2918,22 +2985,6 @@ static const struct acpi_device_id rt5640_acpi_match[] = {
 MODULE_DEVICE_TABLE(acpi, rt5640_acpi_match);
 #endif
 
-static int rt5640_parse_dt(struct rt5640_priv *rt5640, struct device_node *np)
-{
-	rt5640->ldo1_en = of_get_named_gpio(np, "realtek,ldo1-en-gpios", 0);
-	/*
-	 * LDO1_EN is optional (it may be statically tied on the board).
-	 * -ENOENT means that the property doesn't exist, i.e. there is no
-	 * GPIO, so is not an error. Any other error code means the property
-	 * exists, but could not be parsed.
-	 */
-	if (!gpio_is_valid(rt5640->ldo1_en) &&
-			(rt5640->ldo1_en != -ENOENT))
-		return rt5640->ldo1_en;
-
-	return 0;
-}
-
 static int rt5640_i2c_probe(struct i2c_client *i2c)
 {
 	struct rt5640_priv *rt5640;
@@ -2947,12 +2998,16 @@ static int rt5640_i2c_probe(struct i2c_client *i2c)
 		return -ENOMEM;
 	i2c_set_clientdata(i2c, rt5640);
 
-	if (i2c->dev.of_node) {
-		ret = rt5640_parse_dt(rt5640, i2c->dev.of_node);
-		if (ret)
-			return ret;
-	} else
-		rt5640->ldo1_en = -EINVAL;
+	rt5640->ldo1_en = devm_gpiod_get_optional(&i2c->dev,
+						  "realtek,ldo1-en",
+						  GPIOD_OUT_HIGH);
+	if (IS_ERR(rt5640->ldo1_en))
+		return PTR_ERR(rt5640->ldo1_en);
+
+	if (rt5640->ldo1_en) {
+		gpiod_set_consumer_name(rt5640->ldo1_en, "RT5640 LDO1_EN");
+		msleep(400);
+	}
 
 	rt5640->regmap = devm_regmap_init_i2c(i2c, &rt5640_regmap);
 	if (IS_ERR(rt5640->regmap)) {
@@ -2960,18 +3015,6 @@ static int rt5640_i2c_probe(struct i2c_client *i2c)
 		dev_err(&i2c->dev, "Failed to allocate register map: %d\n",
 			ret);
 		return ret;
-	}
-
-	if (gpio_is_valid(rt5640->ldo1_en)) {
-		ret = devm_gpio_request_one(&i2c->dev, rt5640->ldo1_en,
-					    GPIOF_OUT_INIT_HIGH,
-					    "RT5640 LDO1_EN");
-		if (ret < 0) {
-			dev_err(&i2c->dev, "Failed to request LDO1_EN %d: %d\n",
-				rt5640->ldo1_en, ret);
-			return ret;
-		}
-		msleep(400);
 	}
 
 	regmap_read(rt5640->regmap, RT5640_VENDOR_ID2, &val);
@@ -3012,7 +3055,7 @@ static struct i2c_driver rt5640_i2c_driver = {
 		.acpi_match_table = ACPI_PTR(rt5640_acpi_match),
 		.of_match_table = of_match_ptr(rt5640_of_match),
 	},
-	.probe_new = rt5640_i2c_probe,
+	.probe = rt5640_i2c_probe,
 	.id_table = rt5640_i2c_id,
 };
 module_i2c_driver(rt5640_i2c_driver);

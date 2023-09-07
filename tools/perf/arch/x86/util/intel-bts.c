@@ -17,7 +17,7 @@
 #include "../../../util/evlist.h"
 #include "../../../util/mmap.h"
 #include "../../../util/session.h"
-#include "../../../util/pmu.h"
+#include "../../../util/pmus.h"
 #include "../../../util/debug.h"
 #include "../../../util/record.h"
 #include "../../../util/tsc.h"
@@ -233,7 +233,7 @@ static int intel_bts_recording_options(struct auxtrace_record *itr,
 		struct evsel *tracking_evsel;
 		int err;
 
-		err = parse_events(evlist, "dummy:u", NULL);
+		err = parse_event(evlist, "dummy:u");
 		if (err)
 			return err;
 
@@ -416,7 +416,7 @@ out_err:
 
 struct auxtrace_record *intel_bts_recording_init(int *err)
 {
-	struct perf_pmu *intel_bts_pmu = perf_pmu__find(INTEL_BTS_PMU_NAME);
+	struct perf_pmu *intel_bts_pmu = perf_pmus__find(INTEL_BTS_PMU_NAME);
 	struct intel_bts_recording *btsr;
 
 	if (!intel_bts_pmu)

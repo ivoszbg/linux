@@ -252,9 +252,9 @@ static int memory_info_update(struct snd_sof_dev *sdev, char *buf, size_t buff_s
 	}
 
 	for (i = 0, len = 0; i < reply->num_elems; i++) {
-		ret = snprintf(buf + len, buff_size - len, "zone %d.%d used %#8x free %#8x\n",
-			       reply->elems[i].zone, reply->elems[i].id,
-			       reply->elems[i].used, reply->elems[i].free);
+		ret = scnprintf(buf + len, buff_size - len, "zone %d.%d used %#8x free %#8x\n",
+				reply->elems[i].zone, reply->elems[i].id,
+				reply->elems[i].used, reply->elems[i].free);
 		if (ret < 0)
 			goto error;
 		len += ret;
@@ -353,7 +353,9 @@ int snd_sof_dbg_init(struct snd_sof_dev *sdev)
 			return err;
 	}
 
-	return 0;
+	return snd_sof_debugfs_buf_item(sdev, &sdev->fw_state,
+					sizeof(sdev->fw_state),
+					"fw_state", 0444);
 }
 EXPORT_SYMBOL_GPL(snd_sof_dbg_init);
 
@@ -368,6 +370,7 @@ static const struct soc_fw_state_info {
 	const char *name;
 } fw_state_dbg[] = {
 	{SOF_FW_BOOT_NOT_STARTED, "SOF_FW_BOOT_NOT_STARTED"},
+	{SOF_DSPLESS_MODE, "SOF_DSPLESS_MODE"},
 	{SOF_FW_BOOT_PREPARE, "SOF_FW_BOOT_PREPARE"},
 	{SOF_FW_BOOT_IN_PROGRESS, "SOF_FW_BOOT_IN_PROGRESS"},
 	{SOF_FW_BOOT_FAILED, "SOF_FW_BOOT_FAILED"},
@@ -428,21 +431,20 @@ static void snd_sof_ipc_dump(struct snd_sof_dev *sdev)
 	}
 }
 
-void snd_sof_handle_fw_exception(struct snd_sof_dev *sdev)
+void snd_sof_handle_fw_exception(struct snd_sof_dev *sdev, const char *msg)
 {
 	if (IS_ENABLED(CONFIG_SND_SOC_SOF_DEBUG_RETAIN_DSP_CONTEXT) ||
 	    sof_debug_check_flag(SOF_DBG_RETAIN_CTX)) {
 		/* should we prevent DSP entering D3 ? */
 		if (!sdev->ipc_dump_printed)
 			dev_info(sdev->dev,
-				 "preventing DSP entering D3 state to preserve context\n");
-		pm_runtime_get_noresume(sdev->dev);
+				 "Attempting to prevent DSP from entering D3 state to preserve context\n");
+		pm_runtime_get_if_in_use(sdev->dev);
 	}
 
 	/* dump vital information to the logs */
 	snd_sof_ipc_dump(sdev);
-	snd_sof_dsp_dbg_dump(sdev, "Firmware exception",
-			     SOF_DBG_DUMP_REGS | SOF_DBG_DUMP_MBOX);
+	snd_sof_dsp_dbg_dump(sdev, msg, SOF_DBG_DUMP_REGS | SOF_DBG_DUMP_MBOX);
 	sof_fw_trace_fw_crashed(sdev);
 }
 EXPORT_SYMBOL(snd_sof_handle_fw_exception);

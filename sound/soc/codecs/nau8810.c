@@ -866,7 +866,6 @@ static const struct snd_soc_component_driver nau8810_component_driver = {
 	.idle_bias_on		= 1,
 	.use_pmdown_time	= 1,
 	.endianness		= 1,
-	.non_legacy_dai_naming	= 1,
 };
 
 static int nau8810_i2c_probe(struct i2c_client *i2c)
@@ -915,7 +914,7 @@ static struct i2c_driver nau8810_i2c_driver = {
 		.name = "nau8810",
 		.of_match_table = of_match_ptr(nau8810_of_match),
 	},
-	.probe_new = nau8810_i2c_probe,
+	.probe = nau8810_i2c_probe,
 	.id_table = nau8810_i2c_id,
 };
 

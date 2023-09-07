@@ -19,6 +19,7 @@
 #include <drm/drm_crtc.h>
 #include <drm/drm_device.h>
 #include <drm/drm_drv.h>
+#include <drm/drm_edid.h>
 #include <drm/drm_encoder.h>
 #include <drm/drm_print.h>
 
@@ -158,30 +159,35 @@ drm_connector_has_preferred_mode(struct drm_connector *connector, int width, int
 	return NULL;
 }
 
-static struct drm_display_mode *
-drm_connector_pick_cmdline_mode(struct drm_connector *connector)
+static struct drm_display_mode *drm_connector_pick_cmdline_mode(struct drm_connector *connector)
 {
 	struct drm_cmdline_mode *cmdline_mode;
 	struct drm_display_mode *mode;
 	bool prefer_non_interlace;
 
+	/*
+	 * Find a user-defined mode. If the user gave us a valid
+	 * mode on the kernel command line, it will show up in this
+	 * list.
+	 */
+
+	list_for_each_entry(mode, &connector->modes, head) {
+		if (mode->type & DRM_MODE_TYPE_USERDEF)
+			return mode;
+	}
+
 	cmdline_mode = &connector->cmdline_mode;
 	if (cmdline_mode->specified == false)
 		return NULL;
 
-	/* attempt to find a matching mode in the list of modes
-	 *  we have gotten so far, if not add a CVT mode that conforms
+	/*
+	 * Attempt to find a matching mode in the list of modes we
+	 * have gotten so far.
 	 */
-	if (cmdline_mode->rb || cmdline_mode->margins)
-		goto create_mode;
 
 	prefer_non_interlace = !cmdline_mode->interlace;
 again:
 	list_for_each_entry(mode, &connector->modes, head) {
-		/* Check (optional) mode name first */
-		if (!strcmp(mode->name, cmdline_mode->name))
-			return mode;
-
 		/* check width/height */
 		if (mode->hdisplay != cmdline_mode->xres ||
 		    mode->vdisplay != cmdline_mode->yres)
@@ -207,12 +213,7 @@ again:
 		goto again;
 	}
 
-create_mode:
-	mode = drm_mode_create_from_cmdline_mode(connector->dev, cmdline_mode);
-	if (mode)
-		list_add(&mode->head, &connector->modes);
-
-	return mode;
+	return NULL;
 }
 
 static bool drm_connector_enabled(struct drm_connector *connector, bool strict)
@@ -310,6 +311,9 @@ static bool drm_client_target_cloned(struct drm_device *dev,
 	can_clone = true;
 	dmt_mode = drm_mode_find_dmt(dev, 1024, 768, 60, false);
 
+	if (!dmt_mode)
+		goto fail;
+
 	for (i = 0; i < connector_count; i++) {
 		if (!enabled[i])
 			continue;
@@ -325,11 +329,13 @@ static bool drm_client_target_cloned(struct drm_device *dev,
 		if (!modes[i])
 			can_clone = false;
 	}
+	kfree(dmt_mode);
 
 	if (can_clone) {
 		DRM_DEBUG_KMS("can clone using 1024x768\n");
 		return true;
 	}
+fail:
 	DRM_INFO("kms: can't enable cloning when we probably wanted to.\n");
 	return false;
 }
@@ -861,6 +867,7 @@ int drm_client_modeset_probe(struct drm_client_dev *client, unsigned int width, 
 				break;
 			}
 
+			kfree(modeset->mode);
 			modeset->mode = drm_mode_duplicate(dev, mode);
 			drm_connector_get(connector);
 			modeset->connectors[modeset->num_connectors++] = connector;
@@ -1232,3 +1239,7 @@ int drm_client_modeset_dpms(struct drm_client_dev *client, int mode)
 	return ret;
 }
 EXPORT_SYMBOL(drm_client_modeset_dpms);
+
+#ifdef CONFIG_DRM_KUNIT_TEST
+#include "tests/drm_client_modeset_test.c"
+#endif

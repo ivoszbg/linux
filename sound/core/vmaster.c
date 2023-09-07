@@ -280,6 +280,34 @@ int _snd_ctl_add_follower(struct snd_kcontrol *master,
 }
 EXPORT_SYMBOL(_snd_ctl_add_follower);
 
+/**
+ * snd_ctl_add_followers - add multiple followers to vmaster
+ * @card: card instance
+ * @master: the target vmaster kcontrol object
+ * @list: NULL-terminated list of name strings of followers to be added
+ *
+ * Adds the multiple follower kcontrols with the given names.
+ * Returns 0 for success or a negative error code.
+ */
+int snd_ctl_add_followers(struct snd_card *card, struct snd_kcontrol *master,
+			  const char * const *list)
+{
+	struct snd_kcontrol *follower;
+	int err;
+
+	for (; *list; list++) {
+		follower = snd_ctl_find_id_mixer(card, *list);
+		if (follower) {
+			err = snd_ctl_add_follower(master, follower);
+			if (err < 0)
+				return err;
+		}
+	}
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(snd_ctl_add_followers);
+
 /*
  * ctl callbacks for master controls
  */
@@ -494,7 +522,8 @@ EXPORT_SYMBOL_GPL(snd_ctl_sync_vmaster);
  * @arg: optional function argument
  *
  * Apply the function @func to each follower kctl of the given vmaster kctl.
- * Returns 0 if successful, or a negative error code.
+ *
+ * Return: 0 if successful, or a negative error code
  */
 int snd_ctl_apply_vmaster_followers(struct snd_kcontrol *kctl,
 				    int (*func)(struct snd_kcontrol *vfollower,

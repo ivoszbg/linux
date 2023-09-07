@@ -439,7 +439,7 @@ static int emc6w201_detect(struct i2c_client *client,
 		return -ENODEV;
 	}
 
-	strlcpy(info->type, "emc6w201", I2C_NAME_SIZE);
+	strscpy(info->type, "emc6w201", I2C_NAME_SIZE);
 
 	return 0;
 }
@@ -474,7 +474,7 @@ static struct i2c_driver emc6w201_driver = {
 	.driver = {
 		.name	= "emc6w201",
 	},
-	.probe_new	= emc6w201_probe,
+	.probe		= emc6w201_probe,
 	.id_table	= emc6w201_id,
 	.detect		= emc6w201_detect,
 	.address_list	= normal_i2c,

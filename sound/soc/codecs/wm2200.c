@@ -1770,11 +1770,6 @@ static int wm2200_hw_params(struct snd_pcm_substream *substream,
 	return 0;
 }
 
-static const struct snd_soc_dai_ops wm2200_dai_ops = {
-	.set_fmt = wm2200_set_fmt,
-	.hw_params = wm2200_hw_params,
-};
-
 static int wm2200_set_sysclk(struct snd_soc_component *component, int clk_id,
 			     int source, unsigned int freq, int dir)
 {
@@ -2068,6 +2063,12 @@ static int wm2200_dai_probe(struct snd_soc_dai *dai)
 	return 0;
 }
 
+static const struct snd_soc_dai_ops wm2200_dai_ops = {
+	.probe = wm2200_dai_probe,
+	.set_fmt = wm2200_set_fmt,
+	.hw_params = wm2200_hw_params,
+};
+
 #define WM2200_RATES SNDRV_PCM_RATE_8000_48000
 
 #define WM2200_FORMATS (SNDRV_PCM_FMTBIT_S16_LE | SNDRV_PCM_FMTBIT_S20_3LE |\
@@ -2075,7 +2076,6 @@ static int wm2200_dai_probe(struct snd_soc_dai *dai)
 
 static struct snd_soc_dai_driver wm2200_dai = {
 	.name = "wm2200",
-	.probe = wm2200_dai_probe,
 	.playback = {
 		.stream_name = "Playback",
 		.channels_min = 2,
@@ -2104,7 +2104,6 @@ static const struct snd_soc_component_driver soc_component_wm2200 = {
 	.dapm_routes		= wm2200_dapm_routes,
 	.num_dapm_routes	= ARRAY_SIZE(wm2200_dapm_routes),
 	.endianness		= 1,
-	.non_legacy_dai_naming	= 1,
 };
 
 static irqreturn_t wm2200_irq(int irq, void *data)
@@ -2152,7 +2151,7 @@ static const struct regmap_config wm2200_regmap = {
 	.num_reg_defaults = ARRAY_SIZE(wm2200_reg_defaults),
 	.volatile_reg = wm2200_volatile_register,
 	.readable_reg = wm2200_readable_register,
-	.cache_type = REGCACHE_RBTREE,
+	.cache_type = REGCACHE_MAPLE,
 	.ranges = wm2200_ranges,
 	.num_ranges = ARRAY_SIZE(wm2200_ranges),
 };
@@ -2415,7 +2414,7 @@ err_enable:
 	return ret;
 }
 
-static int wm2200_i2c_remove(struct i2c_client *i2c)
+static void wm2200_i2c_remove(struct i2c_client *i2c)
 {
 	struct wm2200_priv *wm2200 = i2c_get_clientdata(i2c);
 
@@ -2428,8 +2427,6 @@ static int wm2200_i2c_remove(struct i2c_client *i2c)
 		gpio_set_value_cansleep(wm2200->pdata.ldo_ena, 0);
 	regulator_bulk_disable(ARRAY_SIZE(wm2200->core_supplies),
 			       wm2200->core_supplies);
-
-	return 0;
 }
 
 #ifdef CONFIG_PM
@@ -2488,7 +2485,7 @@ static struct i2c_driver wm2200_i2c_driver = {
 		.name = "wm2200",
 		.pm = &wm2200_pm,
 	},
-	.probe_new = wm2200_i2c_probe,
+	.probe =    wm2200_i2c_probe,
 	.remove =   wm2200_i2c_remove,
 	.id_table = wm2200_i2c_id,
 };

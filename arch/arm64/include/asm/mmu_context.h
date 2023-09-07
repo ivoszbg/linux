@@ -18,6 +18,7 @@
 
 #include <asm/cacheflush.h>
 #include <asm/cpufeature.h>
+#include <asm/daifflags.h>
 #include <asm/proc-fns.h>
 #include <asm-generic/mm_hooks.h>
 #include <asm/cputype.h>
@@ -38,11 +39,16 @@ static inline void contextidr_thread_switch(struct task_struct *next)
 /*
  * Set TTBR0 to reserved_pg_dir. No translations will be possible via TTBR0.
  */
-static inline void cpu_set_reserved_ttbr0(void)
+static inline void cpu_set_reserved_ttbr0_nosync(void)
 {
 	unsigned long ttbr = phys_to_ttbr(__pa_symbol(reserved_pg_dir));
 
 	write_sysreg(ttbr, ttbr0_el1);
+}
+
+static inline void cpu_set_reserved_ttbr0(void)
+{
+	cpu_set_reserved_ttbr0_nosync();
 	isb();
 }
 
@@ -51,7 +57,6 @@ void cpu_do_switch_mm(phys_addr_t pgd_phys, struct mm_struct *mm);
 static inline void cpu_switch_mm(pgd_t *pgd, struct mm_struct *mm)
 {
 	BUG_ON(pgd == swapper_pg_dir);
-	cpu_set_reserved_ttbr0();
 	cpu_do_switch_mm(virt_to_phys(pgd),mm);
 }
 
@@ -60,8 +65,7 @@ static inline void cpu_switch_mm(pgd_t *pgd, struct mm_struct *mm)
  * TCR_T0SZ(VA_BITS), unless system RAM is positioned very high in
  * physical memory, in which case it will be smaller.
  */
-extern u64 idmap_t0sz;
-extern u64 idmap_ptrs_per_pgd;
+extern int idmap_t0sz;
 
 /*
  * Ensure TCR.T0SZ is set to the provided value.
@@ -106,13 +110,18 @@ static inline void cpu_uninstall_idmap(void)
 		cpu_switch_mm(mm->pgd, mm);
 }
 
-static inline void cpu_install_idmap(void)
+static inline void __cpu_install_idmap(pgd_t *idmap)
 {
 	cpu_set_reserved_ttbr0();
 	local_flush_tlb_all();
 	cpu_set_idmap_tcr_t0sz();
 
-	cpu_switch_mm(lm_alias(idmap_pg_dir), &init_mm);
+	cpu_switch_mm(lm_alias(idmap), &init_mm);
+}
+
+static inline void cpu_install_idmap(void)
+{
+	__cpu_install_idmap(idmap_pg_dir);
 }
 
 /*
@@ -143,11 +152,12 @@ static inline void cpu_install_ttbr0(phys_addr_t ttbr0, unsigned long t0sz)
  * Atomically replaces the active TTBR1_EL1 PGD with a new VA-compatible PGD,
  * avoiding the possibility of conflicting TLB entries being allocated.
  */
-static inline void __nocfi cpu_replace_ttbr1(pgd_t *pgdp)
+static inline void cpu_replace_ttbr1(pgd_t *pgdp, pgd_t *idmap)
 {
 	typedef void (ttbr_replace_func)(phys_addr_t);
 	extern ttbr_replace_func idmap_cpu_replace_ttbr1;
 	ttbr_replace_func *replace_phys;
+	unsigned long daif;
 
 	/* phys_to_ttbr() zeros lower 2 bits of ttbr with 52-bit PA */
 	phys_addr_t ttbr1 = phys_to_ttbr(virt_to_phys(pgdp));
@@ -158,16 +168,24 @@ static inline void __nocfi cpu_replace_ttbr1(pgd_t *pgdp)
 		 * up (i.e. cpufeature framework is not up yet) and
 		 * latter only when we enable CNP via cpufeature's
 		 * enable() callback.
-		 * Also we rely on the cpu_hwcap bit being set before
+		 * Also we rely on the system_cpucaps bit being set before
 		 * calling the enable() function.
 		 */
 		ttbr1 |= TTBR_CNP_BIT;
 	}
 
-	replace_phys = (void *)__pa_symbol(function_nocfi(idmap_cpu_replace_ttbr1));
+	replace_phys = (void *)__pa_symbol(idmap_cpu_replace_ttbr1);
 
-	cpu_install_idmap();
+	__cpu_install_idmap(idmap);
+
+	/*
+	 * We really don't want to take *any* exceptions while TTBR1 is
+	 * in the process of being replaced so mask everything.
+	 */
+	daif = local_daif_save();
 	replace_phys(ttbr1);
+	local_daif_restore(daif);
+
 	cpu_uninstall_idmap();
 }
 
@@ -273,6 +291,12 @@ void post_ttbr_update_workaround(void);
 
 unsigned long arm64_mm_context_get(struct mm_struct *mm);
 void arm64_mm_context_put(struct mm_struct *mm);
+
+#define mm_untag_mask mm_untag_mask
+static inline unsigned long mm_untag_mask(struct mm_struct *mm)
+{
+	return -1UL >> 8;
+}
 
 #include <asm-generic/mmu_context.h>
 

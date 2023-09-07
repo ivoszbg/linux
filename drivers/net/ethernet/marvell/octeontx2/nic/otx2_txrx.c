@@ -10,6 +10,7 @@
 #include <net/tso.h>
 #include <linux/bpf.h>
 #include <linux/bpf_trace.h>
+#include <net/ip6_checksum.h>
 
 #include "otx2_reg.h"
 #include "otx2_common.h"
@@ -19,6 +20,12 @@
 #include "cn10k.h"
 
 #define CQE_ADDR(CQ, idx) ((CQ)->cqe_base + ((CQ)->cqe_size * (idx)))
+#define PTP_PORT	        0x13F
+/* PTPv2 header Original Timestamp starts at byte offset 34 and
+ * contains 6 byte seconds field and 4 byte nano seconds field.
+ */
+#define PTP_SYNC_SEC_OFFSET	34
+
 static bool otx2_xdp_rcv_pkt_handler(struct otx2_nic *pfvf,
 				     struct bpf_prog *prog,
 				     struct nix_cqe_rx_s *cqe,
@@ -210,9 +217,6 @@ static bool otx2_skb_add_frag(struct otx2_nic *pfvf, struct sk_buff *skb,
 		skb_add_rx_frag(skb, skb_shinfo(skb)->nr_frags, page,
 				va - page_address(page) + off,
 				len - off, pfvf->rbsize);
-
-		otx2_dma_unmap_page(pfvf, iova - OTX2_HEAD_ROOM,
-				    pfvf->rbsize, DMA_FROM_DEVICE);
 		return true;
 	}
 
@@ -375,6 +379,8 @@ static void otx2_rcv_pkt_handler(struct otx2_nic *pfvf,
 	if (pfvf->netdev->features & NETIF_F_RXCSUM)
 		skb->ip_summed = CHECKSUM_UNNECESSARY;
 
+	skb_mark_for_recycle(skb);
+
 	napi_gro_frags(napi);
 }
 
@@ -435,6 +441,7 @@ static int otx2_tx_napi_handler(struct otx2_nic *pfvf,
 				struct otx2_cq_queue *cq, int budget)
 {
 	int tx_pkts = 0, tx_bytes = 0, qidx;
+	struct otx2_snd_queue *sq;
 	struct nix_cqe_tx_s *cqe;
 	int processed_cqe = 0;
 
@@ -445,6 +452,9 @@ static int otx2_tx_napi_handler(struct otx2_nic *pfvf,
 		return 0;
 
 process_cqe:
+	qidx = cq->cq_idx - pfvf->hw.rx_queues;
+	sq = &pfvf->qset.sq[qidx];
+
 	while (likely(processed_cqe < budget) && cq->pend_cqe) {
 		cqe = (struct nix_cqe_tx_s *)otx2_get_next_cqe(cq);
 		if (unlikely(!cqe)) {
@@ -452,18 +462,21 @@ process_cqe:
 				return 0;
 			break;
 		}
-		if (cq->cq_type == CQ_XDP) {
-			qidx = cq->cq_idx - pfvf->hw.rx_queues;
-			otx2_xdp_snd_pkt_handler(pfvf, &pfvf->qset.sq[qidx],
-						 cqe);
-		} else {
-			otx2_snd_pkt_handler(pfvf, cq,
-					     &pfvf->qset.sq[cq->cint_idx],
+
+		qidx = cq->cq_idx - pfvf->hw.rx_queues;
+
+		if (cq->cq_type == CQ_XDP)
+			otx2_xdp_snd_pkt_handler(pfvf, sq, cqe);
+		else
+			otx2_snd_pkt_handler(pfvf, cq, &pfvf->qset.sq[qidx],
 					     cqe, budget, &tx_pkts, &tx_bytes);
-		}
+
 		cqe->hdr.cqe_type = NIX_XQE_TYPE_INVALID;
 		processed_cqe++;
 		cq->pend_cqe--;
+
+		sq->cons_head++;
+		sq->cons_head &= (sq->sqe_cnt - 1);
 	}
 
 	/* Free CQEs to HW */
@@ -473,7 +486,11 @@ process_cqe:
 	if (likely(tx_pkts)) {
 		struct netdev_queue *txq;
 
-		txq = netdev_get_tx_queue(pfvf->netdev, cq->cint_idx);
+		qidx = cq->cq_idx - pfvf->hw.rx_queues;
+
+		if (qidx >= pfvf->hw.tx_queues)
+			qidx -= pfvf->hw.xdp_queues;
+		txq = netdev_get_tx_queue(pfvf->netdev, qidx);
 		netdev_tx_completed_queue(txq, tx_pkts, tx_bytes);
 		/* Check if queue was stopped earlier due to ring full */
 		smp_mb();
@@ -624,7 +641,7 @@ static void otx2_sqe_add_ext(struct otx2_nic *pfvf, struct otx2_snd_queue *sq,
 	ext->subdc = NIX_SUBDC_EXT;
 	if (skb_shinfo(skb)->gso_size) {
 		ext->lso = 1;
-		ext->lso_sb = skb_transport_offset(skb) + tcp_hdrlen(skb);
+		ext->lso_sb = skb_tcp_all_headers(skb);
 		ext->lso_mps = skb_shinfo(skb)->gso_size;
 
 		/* Only TSOv4 and TSOv6 GSO offloads are supported */
@@ -639,9 +656,7 @@ static void otx2_sqe_add_ext(struct otx2_nic *pfvf, struct otx2_snd_queue *sq,
 				htons(ext->lso_sb - skb_network_offset(skb));
 		} else if (skb_shinfo(skb)->gso_type & SKB_GSO_TCPV6) {
 			ext->lso_format = pfvf->hw.lso_tsov6_idx;
-
-			ipv6_hdr(skb)->payload_len =
-				htons(ext->lso_sb - skb_network_offset(skb));
+			ipv6_hdr(skb)->payload_len = htons(tcp_hdrlen(skb));
 		} else if (skb_shinfo(skb)->gso_type & SKB_GSO_UDP_L4) {
 			__be16 l3_proto = vlan_get_protocol(skb);
 			struct udphdr *udph = udp_hdr(skb);
@@ -686,7 +701,8 @@ static void otx2_sqe_add_ext(struct otx2_nic *pfvf, struct otx2_snd_queue *sq,
 }
 
 static void otx2_sqe_add_mem(struct otx2_snd_queue *sq, int *offset,
-			     int alg, u64 iova)
+			     int alg, u64 iova, int ptp_offset,
+			     u64 base_ns, bool udp_csum_crt)
 {
 	struct nix_sqe_mem_s *mem;
 
@@ -695,6 +711,13 @@ static void otx2_sqe_add_mem(struct otx2_snd_queue *sq, int *offset,
 	mem->alg = alg;
 	mem->wmem = 1; /* wait for the memory operation */
 	mem->addr = iova;
+
+	if (ptp_offset) {
+		mem->start_offset = ptp_offset;
+		mem->udp_csum_crt = !!udp_csum_crt;
+		mem->base_ns = base_ns;
+		mem->step_type = 1;
+	}
 
 	*offset += sizeof(*mem);
 }
@@ -715,7 +738,8 @@ static void otx2_sqe_add_hdr(struct otx2_nic *pfvf, struct otx2_snd_queue *sq,
 		sqe_hdr->aura = sq->aura_id;
 		/* Post a CQE Tx after pkt transmission */
 		sqe_hdr->pnc = 1;
-		sqe_hdr->sq = qidx;
+		sqe_hdr->sq = (qidx >=  pfvf->hw.tx_queues) ?
+			       qidx + pfvf->hw.xdp_queues : qidx;
 	}
 	sqe_hdr->total = skb->len;
 	/* Set SQE identifier which will be used later for freeing SKB */
@@ -931,7 +955,7 @@ static bool is_hw_tso_supported(struct otx2_nic *pfvf,
 	 * be correctly modified, hence don't offload such TSO segments.
 	 */
 
-	payload_len = skb->len - (skb_transport_offset(skb) + tcp_hdrlen(skb));
+	payload_len = skb->len - skb_tcp_all_headers(skb);
 	last_seg_size = payload_len % skb_shinfo(skb)->gso_size;
 	if (last_seg_size && last_seg_size < 16)
 		return false;
@@ -952,16 +976,139 @@ static int otx2_get_sqe_count(struct otx2_nic *pfvf, struct sk_buff *skb)
 	return skb_shinfo(skb)->gso_segs;
 }
 
+static bool otx2_validate_network_transport(struct sk_buff *skb)
+{
+	if ((ip_hdr(skb)->protocol == IPPROTO_UDP) ||
+	    (ipv6_hdr(skb)->nexthdr == IPPROTO_UDP)) {
+		struct udphdr *udph = udp_hdr(skb);
+
+		if (udph->source == htons(PTP_PORT) &&
+		    udph->dest == htons(PTP_PORT))
+			return true;
+	}
+
+	return false;
+}
+
+static bool otx2_ptp_is_sync(struct sk_buff *skb, int *offset, bool *udp_csum_crt)
+{
+	struct ethhdr *eth = (struct ethhdr *)(skb->data);
+	u16 nix_offload_hlen = 0, inner_vhlen = 0;
+	bool udp_hdr_present = false, is_sync;
+	u8 *data = skb->data, *msgtype;
+	__be16 proto = eth->h_proto;
+	int network_depth = 0;
+
+	/* NIX is programmed to offload outer  VLAN header
+	 * in case of single vlan protocol field holds Network header ETH_IP/V6
+	 * in case of stacked vlan protocol field holds Inner vlan (8100)
+	 */
+	if (skb->dev->features & NETIF_F_HW_VLAN_CTAG_TX &&
+	    skb->dev->features & NETIF_F_HW_VLAN_STAG_TX) {
+		if (skb->vlan_proto == htons(ETH_P_8021AD)) {
+			/* Get vlan protocol */
+			proto = __vlan_get_protocol(skb, eth->h_proto, NULL);
+			/* SKB APIs like skb_transport_offset does not include
+			 * offloaded vlan header length. Need to explicitly add
+			 * the length
+			 */
+			nix_offload_hlen = VLAN_HLEN;
+			inner_vhlen = VLAN_HLEN;
+		} else if (skb->vlan_proto == htons(ETH_P_8021Q)) {
+			nix_offload_hlen = VLAN_HLEN;
+		}
+	} else if (eth_type_vlan(eth->h_proto)) {
+		proto = __vlan_get_protocol(skb, eth->h_proto, &network_depth);
+	}
+
+	switch (ntohs(proto)) {
+	case ETH_P_1588:
+		if (network_depth)
+			*offset = network_depth;
+		else
+			*offset = ETH_HLEN + nix_offload_hlen +
+				  inner_vhlen;
+		break;
+	case ETH_P_IP:
+	case ETH_P_IPV6:
+		if (!otx2_validate_network_transport(skb))
+			return false;
+
+		*offset = nix_offload_hlen + skb_transport_offset(skb) +
+			  sizeof(struct udphdr);
+		udp_hdr_present = true;
+
+	}
+
+	msgtype = data + *offset;
+	/* Check PTP messageId is SYNC or not */
+	is_sync = !(*msgtype & 0xf);
+	if (is_sync)
+		*udp_csum_crt = udp_hdr_present;
+	else
+		*offset = 0;
+
+	return is_sync;
+}
+
 static void otx2_set_txtstamp(struct otx2_nic *pfvf, struct sk_buff *skb,
 			      struct otx2_snd_queue *sq, int *offset)
 {
+	struct ethhdr	*eth = (struct ethhdr *)(skb->data);
+	struct ptpv2_tstamp *origin_tstamp;
+	bool udp_csum_crt = false;
+	unsigned int udphoff;
+	struct timespec64 ts;
+	int ptp_offset = 0;
+	__wsum skb_csum;
 	u64 iova;
 
-	if (!skb_shinfo(skb)->gso_size &&
-	    skb_shinfo(skb)->tx_flags & SKBTX_HW_TSTAMP) {
-		skb_shinfo(skb)->tx_flags |= SKBTX_IN_PROGRESS;
+	if (unlikely(!skb_shinfo(skb)->gso_size &&
+		     (skb_shinfo(skb)->tx_flags & SKBTX_HW_TSTAMP))) {
+		if (unlikely(pfvf->flags & OTX2_FLAG_PTP_ONESTEP_SYNC &&
+			     otx2_ptp_is_sync(skb, &ptp_offset, &udp_csum_crt))) {
+			origin_tstamp = (struct ptpv2_tstamp *)
+					((u8 *)skb->data + ptp_offset +
+					 PTP_SYNC_SEC_OFFSET);
+			ts = ns_to_timespec64(pfvf->ptp->tstamp);
+			origin_tstamp->seconds_msb = htons((ts.tv_sec >> 32) & 0xffff);
+			origin_tstamp->seconds_lsb = htonl(ts.tv_sec & 0xffffffff);
+			origin_tstamp->nanoseconds = htonl(ts.tv_nsec);
+			/* Point to correction field in PTP packet */
+			ptp_offset += 8;
+
+			/* When user disables hw checksum, stack calculates the csum,
+			 * but it does not cover ptp timestamp which is added later.
+			 * Recalculate the checksum manually considering the timestamp.
+			 */
+			if (udp_csum_crt) {
+				struct udphdr *uh = udp_hdr(skb);
+
+				if (skb->ip_summed != CHECKSUM_PARTIAL && uh->check != 0) {
+					udphoff = skb_transport_offset(skb);
+					uh->check = 0;
+					skb_csum = skb_checksum(skb, udphoff, skb->len - udphoff,
+								0);
+					if (ntohs(eth->h_proto) == ETH_P_IPV6)
+						uh->check = csum_ipv6_magic(&ipv6_hdr(skb)->saddr,
+									    &ipv6_hdr(skb)->daddr,
+									    skb->len - udphoff,
+									    ipv6_hdr(skb)->nexthdr,
+									    skb_csum);
+					else
+						uh->check = csum_tcpudp_magic(ip_hdr(skb)->saddr,
+									      ip_hdr(skb)->daddr,
+									      skb->len - udphoff,
+									      IPPROTO_UDP,
+									      skb_csum);
+				}
+			}
+		} else {
+			skb_shinfo(skb)->tx_flags |= SKBTX_IN_PROGRESS;
+		}
 		iova = sq->timestamps->iova + (sq->head * sizeof(u64));
-		otx2_sqe_add_mem(sq, offset, NIX_SENDMEMALG_E_SETTSTMP, iova);
+		otx2_sqe_add_mem(sq, offset, NIX_SENDMEMALG_E_SETTSTMP, iova,
+				 ptp_offset, pfvf->ptp->base_ns, udp_csum_crt);
 	} else {
 		skb_tx_timestamp(skb);
 	}
@@ -972,17 +1119,17 @@ bool otx2_sq_append_skb(struct net_device *netdev, struct otx2_snd_queue *sq,
 {
 	struct netdev_queue *txq = netdev_get_tx_queue(netdev, qidx);
 	struct otx2_nic *pfvf = netdev_priv(netdev);
-	int offset, num_segs, free_sqe;
+	int offset, num_segs, free_desc;
 	struct nix_sqe_hdr_s *sqe_hdr;
 
-	/* Check if there is room for new SQE.
-	 * 'Num of SQBs freed to SQ's pool - SQ's Aura count'
-	 * will give free SQE count.
+	/* Check if there is enough room between producer
+	 * and consumer index.
 	 */
-	free_sqe = (sq->num_sqbs - *sq->aura_fc_addr) * sq->sqe_per_sqb;
+	free_desc = (sq->cons_head - sq->head - 1 + sq->sqe_cnt) & (sq->sqe_cnt - 1);
+	if (free_desc < sq->sqe_thresh)
+		return false;
 
-	if (free_sqe < sq->sqe_thresh ||
-	    free_sqe < otx2_get_sqe_count(pfvf, skb))
+	if (free_desc < otx2_get_sqe_count(pfvf, skb))
 		return false;
 
 	num_segs = skb_shinfo(skb)->nr_frags + 1;
@@ -1036,17 +1183,22 @@ bool otx2_sq_append_skb(struct net_device *netdev, struct otx2_snd_queue *sq,
 }
 EXPORT_SYMBOL(otx2_sq_append_skb);
 
-void otx2_cleanup_rx_cqes(struct otx2_nic *pfvf, struct otx2_cq_queue *cq)
+void otx2_cleanup_rx_cqes(struct otx2_nic *pfvf, struct otx2_cq_queue *cq, int qidx)
 {
 	struct nix_cqe_rx_s *cqe;
+	struct otx2_pool *pool;
 	int processed_cqe = 0;
-	u64 iova, pa;
+	u16 pool_id;
+	u64 iova;
 
 	if (pfvf->xdp_prog)
 		xdp_rxq_info_unreg(&cq->xdp_rxq);
 
 	if (otx2_nix_cq_op_status(pfvf, cq) || !cq->pend_cqe)
 		return;
+
+	pool_id = otx2_get_pool_idx(pfvf, AURA_NIX_RQ, qidx);
+	pool = &pfvf->qset.pool[pool_id];
 
 	while (cq->pend_cqe) {
 		cqe = (struct nix_cqe_rx_s *)otx2_get_next_cqe(cq);
@@ -1060,9 +1212,8 @@ void otx2_cleanup_rx_cqes(struct otx2_nic *pfvf, struct otx2_cq_queue *cq)
 			continue;
 		}
 		iova = cqe->sg.seg_addr - OTX2_HEAD_ROOM;
-		pa = otx2_iova_to_phys(pfvf->iommu_domain, iova);
-		otx2_dma_unmap_page(pfvf, iova, pfvf->rbsize, DMA_FROM_DEVICE);
-		put_page(virt_to_page(phys_to_virt(pa)));
+
+		otx2_free_bufs(pfvf, pool, iova, pfvf->rbsize);
 	}
 
 	/* Free CQEs to HW */
@@ -1077,8 +1228,10 @@ void otx2_cleanup_tx_cqes(struct otx2_nic *pfvf, struct otx2_cq_queue *cq)
 	struct nix_cqe_tx_s *cqe;
 	int processed_cqe = 0;
 	struct sg_list *sg;
+	int qidx;
 
-	sq = &pfvf->qset.sq[cq->cint_idx];
+	qidx = cq->cq_idx - pfvf->hw.rx_queues;
+	sq = &pfvf->qset.sq[qidx];
 
 	if (otx2_nix_cq_op_status(pfvf, cq) || !cq->pend_cqe)
 		return;

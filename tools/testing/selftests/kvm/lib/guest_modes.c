@@ -65,9 +65,9 @@ void guest_modes_append_default(void)
 		struct kvm_s390_vm_cpu_processor info;
 
 		kvm_fd = open_kvm_dev_path_or_exit();
-		vm_fd = ioctl(kvm_fd, KVM_CREATE_VM, 0);
-		kvm_device_access(vm_fd, KVM_S390_VM_CPU_MODEL,
-				  KVM_S390_VM_CPU_PROCESSOR, &info, false);
+		vm_fd = __kvm_ioctl(kvm_fd, KVM_CREATE_VM, NULL);
+		kvm_device_attr_get(vm_fd, KVM_S390_VM_CPU_MODEL,
+				    KVM_S390_VM_CPU_PROCESSOR, &info);
 		close(vm_fd);
 		close(kvm_fd);
 		/* Starting with z13 we have 47bits of physical address */
@@ -127,7 +127,7 @@ void guest_modes_cmdline(const char *arg)
 		mode_selected = true;
 	}
 
-	mode = strtoul(optarg, NULL, 10);
+	mode = atoi_non_negative("Guest mode ID", arg);
 	TEST_ASSERT(mode < NUM_VM_MODES, "Guest mode ID %d too big", mode);
 	guest_modes[mode].enabled = true;
 }

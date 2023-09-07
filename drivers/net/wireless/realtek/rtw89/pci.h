@@ -11,11 +11,21 @@
 #define MDIO_PG1_G1 1
 #define MDIO_PG0_G2 2
 #define MDIO_PG1_G2 3
+#define RAC_CTRL_PPR			0x00
+#define RAC_ANA0A			0x0A
+#define B_BAC_EQ_SEL			BIT(5)
+#define RAC_ANA0C			0x0C
+#define B_PCIE_BIT_PSAVE		BIT(15)
 #define RAC_ANA10			0x10
+#define B_PCIE_BIT_PINOUT_DIS		BIT(3)
 #define RAC_REG_REV2			0x1B
 #define BAC_CMU_EN_DLY_MASK		GENMASK(15, 12)
 #define PCIE_DPHY_DLY_25US		0x1
 #define RAC_ANA19			0x19
+#define B_PCIE_BIT_RD_SEL		BIT(2)
+#define RAC_REG_FLD_0			0x1D
+#define BAC_AUTOK_N_MASK		GENMASK(3, 2)
+#define PCIE_AUTOK_4			0x3
 #define RAC_ANA1F			0x1F
 #define RAC_ANA24			0x24
 #define B_AX_DEGLITCH			GENMASK(11, 8)
@@ -45,8 +55,25 @@
 #define B_AX_SEL_REQ_ENTR_L1		BIT(2)
 #define B_AX_SEL_REQ_EXIT_L1		BIT(0)
 
+#define R_AX_PCIE_MIX_CFG_V1		0x300C
+#define B_AX_ASPM_CTRL_L1		BIT(17)
+#define B_AX_ASPM_CTRL_L0		BIT(16)
+#define B_AX_ASPM_CTRL_MASK		GENMASK(17, 16)
+#define B_AX_XFER_PENDING_FW		BIT(11)
+#define B_AX_XFER_PENDING		BIT(10)
+#define B_AX_REQ_EXIT_L1		BIT(9)
+#define B_AX_REQ_ENTR_L1		BIT(8)
+#define B_AX_L1SUB_DISABLE		BIT(0)
+
+#define R_AX_L1_CLK_CTRL		0x3010
+#define B_AX_CLK_REQ_N			BIT(1)
+
 #define R_AX_PCIE_BG_CLR		0x303C
 #define B_AX_BG_CLR_ASYNC_M3		BIT(4)
+
+#define R_AX_PCIE_LAT_CTRL		0x3044
+#define B_AX_CLK_REQ_SEL_OPT		BIT(1)
+#define B_AX_CLK_REQ_SEL		BIT(0)
 
 #define R_AX_PCIE_IO_RCY_M1 0x3100
 #define B_AX_PCIE_IO_RCY_P_M1 BIT(5)
@@ -88,12 +115,16 @@
 #define B_AX_PCIE_WDT_TIMER_S1_MASK GENMASK(31, 0)
 
 #define R_RAC_DIRECT_OFFSET_G1 0x3800
+#define FILTER_OUT_EQ_MASK GENMASK(14, 10)
 #define R_RAC_DIRECT_OFFSET_G2 0x3880
+#define REG_FILTER_OUT_MASK GENMASK(6, 2)
+#define RAC_MULT 2
 
 #define RTW89_PCI_WR_RETRY_CNT		20
 
 /* Interrupts */
 #define R_AX_HIMR0 0x01A0
+#define B_AX_WDT_TIMEOUT_INT_EN BIT(22)
 #define B_AX_HALT_C2H_INT_EN BIT(21)
 #define R_AX_HISR0 0x01A4
 
@@ -119,6 +150,7 @@
 #define B_AX_HD1ISR_IND_INT_EN		BIT(26)
 #define B_AX_HD0ISR_IND_INT_EN		BIT(25)
 #define B_AX_HS0ISR_IND_INT_EN		BIT(24)
+#define B_AX_HS0ISR_IND_INT_EN_WKARND	BIT(23)
 #define B_AX_RETRAIN_INT_EN		BIT(21)
 #define B_AX_RPQBD_FULL_INT_EN		BIT(20)
 #define B_AX_RDU_INT_EN			BIT(19)
@@ -170,6 +202,18 @@
 #define B_AX_RPQDMA_INT			BIT(2)
 #define B_AX_RXP1DMA_INT		BIT(1)
 #define B_AX_RXDMA_INT			BIT(0)
+
+#define R_AX_HAXI_IDCT_MSK 0x10B8
+#define B_AX_TXBD_LEN0_ERR_IDCT_MSK BIT(3)
+#define B_AX_TXBD_4KBOUND_ERR_IDCT_MSK BIT(2)
+#define B_AX_RXMDA_STUCK_IDCT_MSK BIT(1)
+#define B_AX_TXMDA_STUCK_IDCT_MSK BIT(0)
+
+#define R_AX_HAXI_IDCT 0x10BC
+#define B_AX_TXBD_LEN0_ERR_IDCT BIT(3)
+#define B_AX_TXBD_4KBOUND_ERR_IDCT BIT(2)
+#define B_AX_RXMDA_STUCK_IDCT BIT(1)
+#define B_AX_TXMDA_STUCK_IDCT BIT(0)
 
 #define R_AX_HAXI_HIMR10 0x11E0
 #define B_AX_TXDMA_CH11_INT_EN_V1 BIT(1)
@@ -382,6 +426,16 @@
 #define B_AX_STOP_RPQ			BIT(1)
 #define B_AX_STOP_RXQ			BIT(0)
 #define B_AX_TX_STOP1_ALL		GENMASK(18, 8)
+#define B_AX_TX_STOP1_MASK		(B_AX_STOP_ACH0 | B_AX_STOP_ACH1 | \
+					 B_AX_STOP_ACH2 | B_AX_STOP_ACH3 | \
+					 B_AX_STOP_ACH4 | B_AX_STOP_ACH5 | \
+					 B_AX_STOP_ACH6 | B_AX_STOP_ACH7 | \
+					 B_AX_STOP_CH8 | B_AX_STOP_CH9 | \
+					 B_AX_STOP_CH12)
+#define B_AX_TX_STOP1_MASK_V1		(B_AX_STOP_ACH0 | B_AX_STOP_ACH1 | \
+					 B_AX_STOP_ACH2 | B_AX_STOP_ACH3 | \
+					 B_AX_STOP_CH8 | B_AX_STOP_CH9 | \
+					 B_AX_STOP_CH12)
 
 #define R_AX_PCIE_DMA_STOP2	0x1310
 #define B_AX_STOP_CH11			BIT(1)
@@ -430,6 +484,13 @@
 #define B_AX_ACH0_BUSY			BIT(8)
 #define B_AX_RPQ_BUSY			BIT(1)
 #define B_AX_RXQ_BUSY			BIT(0)
+#define DMA_BUSY1_CHECK		(B_AX_ACH0_BUSY | B_AX_ACH1_BUSY | B_AX_ACH2_BUSY | \
+				 B_AX_ACH3_BUSY | B_AX_ACH4_BUSY | B_AX_ACH5_BUSY | \
+				 B_AX_ACH6_BUSY | B_AX_ACH7_BUSY | B_AX_CH8_BUSY | \
+				 B_AX_CH9_BUSY | B_AX_CH12_BUSY)
+#define DMA_BUSY1_CHECK_V1	(B_AX_ACH0_BUSY | B_AX_ACH1_BUSY | B_AX_ACH2_BUSY | \
+				 B_AX_ACH3_BUSY | B_AX_CH8_BUSY | B_AX_CH9_BUSY | \
+				 B_AX_CH12_BUSY)
 
 #define R_AX_PCIE_DMA_BUSY2	0x131C
 #define B_AX_CH11_BUSY			BIT(1)
@@ -504,6 +565,17 @@
 #define RTW89_PCI_MULTITAG		8
 
 /* PCIE CFG register */
+#define RTW89_PCIE_L1_STS_V1		0x80
+#define RTW89_BCFG_LINK_SPEED_MASK	GENMASK(19, 16)
+#define RTW89_PCIE_GEN1_SPEED		0x01
+#define RTW89_PCIE_GEN2_SPEED		0x02
+#define RTW89_PCIE_PHY_RATE		0x82
+#define RTW89_PCIE_PHY_RATE_MASK	GENMASK(1, 0)
+#define RTW89_PCIE_L1SS_STS_V1		0x0168
+#define RTW89_PCIE_BIT_ASPM_L11		BIT(3)
+#define RTW89_PCIE_BIT_ASPM_L12		BIT(2)
+#define RTW89_PCIE_BIT_PCI_L11		BIT(1)
+#define RTW89_PCIE_BIT_PCI_L12		BIT(0)
 #define RTW89_PCIE_ASPM_CTRL		0x070F
 #define RTW89_L1DLY_MASK		GENMASK(5, 3)
 #define RTW89_L0DLY_MASK		GENMASK(2, 0)
@@ -515,8 +587,7 @@
 #define RTW89_PCIE_CLK_CTRL		0x0725
 #define RTW89_PCIE_RST_MSTATE		0x0B48
 #define RTW89_PCIE_BIT_CFG_RST_MSTATE	BIT(0)
-#define RTW89_PCIE_PHY_RATE		0x82
-#define RTW89_PCIE_PHY_RATE_MASK	GENMASK(1, 0)
+
 #define INTF_INTGRA_MINREF_V1	90
 #define INTF_INTGRA_HOSTREF_V1	100
 
@@ -524,11 +595,6 @@ enum rtw89_pcie_phy {
 	PCIE_PHY_GEN1,
 	PCIE_PHY_GEN2,
 	PCIE_PHY_GEN1_UNDEFINE = 0x7F,
-};
-
-enum mac_ax_func_sw {
-	MAC_AX_FUNC_DIS,
-	MAC_AX_FUNC_EN,
 };
 
 enum rtw89_pcie_l0sdly {
@@ -685,6 +751,12 @@ struct rtw89_pci_ch_dma_addr_set {
 	struct rtw89_pci_ch_dma_addr rx[RTW89_RXCH_NUM];
 };
 
+struct rtw89_pci_bd_ram {
+	u8 start_idx;
+	u8 max_num;
+	u8 min_num;
+};
+
 struct rtw89_pci_info {
 	enum mac_ax_bd_trunc_mode txbd_trunc_mode;
 	enum mac_ax_bd_trunc_mode rxbd_trunc_mode;
@@ -709,16 +781,18 @@ struct rtw89_pci_info {
 	u32 max_tag_num_mask;
 	u32 rxbd_rwptr_clr_reg;
 	u32 txbd_rwptr_clr2_reg;
-	u32 dma_stop1_reg;
-	u32 dma_stop2_reg;
-	u32 dma_busy1_reg;
+	struct rtw89_reg_def dma_stop1;
+	struct rtw89_reg_def dma_stop2;
+	struct rtw89_reg_def dma_busy1;
 	u32 dma_busy2_reg;
 	u32 dma_busy3_reg;
 
 	u32 rpwm_addr;
 	u32 cpwm_addr;
+	u32 tx_dma_ch_mask;
 	const struct rtw89_pci_bd_idx_addr *bd_idx_addr_low_power;
 	const struct rtw89_pci_ch_dma_addr_set *dma_addr_set;
+	const struct rtw89_pci_bd_ram (*bd_ram_table)[RTW89_TXCH_NUM];
 
 	int (*ltr_set)(struct rtw89_dev *rtwdev, bool en);
 	u32 (*fill_txaddr_info)(struct rtw89_dev *rtwdev,
@@ -730,12 +804,6 @@ struct rtw89_pci_info {
 	void (*recognize_intrs)(struct rtw89_dev *rtwdev,
 				struct rtw89_pci *rtwpci,
 				struct rtw89_pci_isrs *isrs);
-};
-
-struct rtw89_pci_bd_ram {
-	u8 start_idx;
-	u8 max_num;
-	u8 min_num;
 };
 
 struct rtw89_pci_tx_data {
@@ -937,9 +1005,9 @@ rtw89_pci_rxbd_increase(struct rtw89_pci_rx_ring *rx_ring, u32 cnt)
 
 static inline struct rtw89_pci_tx_data *RTW89_PCI_TX_SKB_CB(struct sk_buff *skb)
 {
-	struct ieee80211_tx_info *info = IEEE80211_SKB_CB(skb);
+	struct rtw89_tx_skb_data *data = RTW89_TX_SKB_CB(skb);
 
-	return (struct rtw89_pci_tx_data *)info->status.status_driver_data;
+	return (struct rtw89_pci_tx_data *)data->hci_priv;
 }
 
 static inline struct rtw89_pci_tx_bd_32 *
@@ -991,6 +1059,8 @@ static inline bool rtw89_pci_ltr_is_err_reg_val(u32 val)
 extern const struct dev_pm_ops rtw89_pm_ops;
 extern const struct rtw89_pci_ch_dma_addr_set rtw89_pci_ch_dma_addr_set;
 extern const struct rtw89_pci_ch_dma_addr_set rtw89_pci_ch_dma_addr_set_v1;
+extern const struct rtw89_pci_bd_ram rtw89_bd_ram_table_dual[RTW89_TXCH_NUM];
+extern const struct rtw89_pci_bd_ram rtw89_bd_ram_table_single[RTW89_TXCH_NUM];
 
 struct pci_device_id;
 

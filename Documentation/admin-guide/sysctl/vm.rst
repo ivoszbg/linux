@@ -356,7 +356,7 @@ The lowmem_reserve_ratio is an array. You can see them by reading this file::
 
 But, these values are not used directly. The kernel calculates # of protection
 pages for each zones from them. These are shown as array of protection pages
-in /proc/zoneinfo like followings. (This is an example of x86-64 box).
+in /proc/zoneinfo like the following. (This is an example of x86-64 box).
 Each zone has an array of protection pages like this::
 
   Node 0, zone      DMA
@@ -433,7 +433,7 @@ a 2bit error in a memory module) is detected in the background by hardware
 that cannot be handled by the kernel. In some cases (like the page
 still having a valid copy on disk) the kernel will handle the failure
 transparently without affecting any applications. But if there is
-no other uptodate copy of the data it will kill to prevent any data
+no other up-to-date copy of the data it will kill to prevent any data
 corruptions from propagating.
 
 1: Kill all processes that have the corrupted and not reloadable page mapped
@@ -565,13 +565,11 @@ See Documentation/admin-guide/mm/hugetlbpage.rst
 hugetlb_optimize_vmemmap
 ========================
 
-This knob is not available when memory_hotplug.memmap_on_memory (kernel parameter)
-is configured or the size of 'struct page' (a structure defined in
-include/linux/mm_types.h) is not power of two (an unusual system config could
+This knob is not available when the size of 'struct page' (a structure defined
+in include/linux/mm_types.h) is not power of two (an unusual system config could
 result in this).
 
-Enable (set to 1) or disable (set to 0) the feature of optimizing vmemmap pages
-associated with each HugeTLB page.
+Enable (set to 1) or disable (set to 0) HugeTLB Vmemmap Optimization (HVO).
 
 Once enabled, the vmemmap pages of subsequent allocation of HugeTLB pages from
 buddy allocator will be optimized (7 pages per 2MB HugeTLB page and 4095 pages
@@ -760,7 +758,7 @@ and don't use much of it.
 
 The default value is 0.
 
-See Documentation/vm/overcommit-accounting.rst and
+See Documentation/mm/overcommit-accounting.rst and
 mm/util.c::__vm_enough_memory() for more information.
 
 
@@ -928,6 +926,9 @@ calls without any restrictions.
 
 The default value is 0.
 
+Another way to control permissions for userfaultfd is to use
+/dev/userfaultfd instead of userfaultfd(2). See
+Documentation/admin-guide/mm/userfaultfd.rst.
 
 user_reserve_kbytes
 ===================

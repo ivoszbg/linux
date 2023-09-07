@@ -1304,7 +1304,6 @@ static const struct snd_soc_component_driver soc_component_dev_rt5616 = {
 	.num_dapm_routes	= ARRAY_SIZE(rt5616_dapm_routes),
 	.use_pmdown_time	= 1,
 	.endianness		= 1,
-	.non_legacy_dai_naming	= 1,
 };
 
 static const struct regmap_config rt5616_regmap = {
@@ -1316,7 +1315,7 @@ static const struct regmap_config rt5616_regmap = {
 					       RT5616_PR_SPACING),
 	.volatile_reg = rt5616_volatile_register,
 	.readable_reg = rt5616_readable_register,
-	.cache_type = REGCACHE_RBTREE,
+	.cache_type = REGCACHE_MAPLE,
 	.reg_defaults = rt5616_reg,
 	.num_reg_defaults = ARRAY_SIZE(rt5616_reg),
 	.ranges = rt5616_ranges,
@@ -1389,10 +1388,8 @@ static int rt5616_i2c_probe(struct i2c_client *i2c)
 				      rt5616_dai, ARRAY_SIZE(rt5616_dai));
 }
 
-static int rt5616_i2c_remove(struct i2c_client *i2c)
-{
-	return 0;
-}
+static void rt5616_i2c_remove(struct i2c_client *i2c)
+{}
 
 static void rt5616_i2c_shutdown(struct i2c_client *client)
 {
@@ -1407,7 +1404,7 @@ static struct i2c_driver rt5616_i2c_driver = {
 		.name = "rt5616",
 		.of_match_table = of_match_ptr(rt5616_of_match),
 	},
-	.probe_new = rt5616_i2c_probe,
+	.probe = rt5616_i2c_probe,
 	.remove = rt5616_i2c_remove,
 	.shutdown = rt5616_i2c_shutdown,
 	.id_table = rt5616_i2c_id,

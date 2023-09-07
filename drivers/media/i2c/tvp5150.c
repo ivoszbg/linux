@@ -1285,7 +1285,7 @@ static int tvp5150_disable_all_input_links(struct tvp5150 *decoder)
 	int err;
 
 	for (i = 0; i < TVP5150_NUM_PADS - 1; i++) {
-		connector_pad = media_entity_remote_pad(&decoder->pads[i]);
+		connector_pad = media_pad_remote_pad_first(&decoder->pads[i]);
 		if (!connector_pad)
 			continue;
 
@@ -2068,6 +2068,10 @@ static int tvp5150_parse_dt(struct tvp5150 *decoder, struct device_node *np)
 		tvpc->ent.name = devm_kasprintf(dev, GFP_KERNEL, "%s %s",
 						v4l2c->name, v4l2c->label ?
 						v4l2c->label : "");
+		if (!tvpc->ent.name) {
+			ret = -ENOMEM;
+			goto err_free;
+		}
 	}
 
 	ep_np = of_graph_get_endpoint_by_regs(np, TVP5150_PAD_VID_OUT, 0);
@@ -2230,7 +2234,7 @@ err:
 	return res;
 }
 
-static int tvp5150_remove(struct i2c_client *c)
+static void tvp5150_remove(struct i2c_client *c)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(c);
 	struct tvp5150 *decoder = to_tvp5150(sd);
@@ -2250,8 +2254,6 @@ static int tvp5150_remove(struct i2c_client *c)
 	v4l2_ctrl_handler_free(&decoder->hdl);
 	pm_runtime_disable(&c->dev);
 	pm_runtime_set_suspended(&c->dev);
-
-	return 0;
 }
 
 /* ----------------------------------------------------------------------- */
@@ -2282,7 +2284,7 @@ static struct i2c_driver tvp5150_driver = {
 		.name	= "tvp5150",
 		.pm	= &tvp5150_pm_ops,
 	},
-	.probe_new	= tvp5150_probe,
+	.probe		= tvp5150_probe,
 	.remove		= tvp5150_remove,
 	.id_table	= tvp5150_id,
 };

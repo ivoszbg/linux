@@ -648,10 +648,10 @@ static int sdhci_acpi_emmc_amd_probe_slot(struct platform_device *pdev,
 	 *       in reading a garbage value and using the wrong presets.
 	 *
 	 *       Since HS400 and HS200 presets must be identical, we could
-	 *       instead use the the SDR104 preset register.
+	 *       instead use the SDR104 preset register.
 	 *
 	 *    If the above issues are resolved we could remove this quirk for
-	 *    firmware that that has valid presets (i.e., SDR12 <= 12 MHz).
+	 *    firmware that has valid presets (i.e., SDR12 <= 12 MHz).
 	 */
 	host->quirks2 |= SDHCI_QUIRK2_PRESET_VALUE_BROKEN;
 
@@ -775,8 +775,8 @@ static int sdhci_acpi_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	const struct sdhci_acpi_slot *slot;
-	struct acpi_device *device, *child;
 	const struct dmi_system_id *id;
+	struct acpi_device *device;
 	struct sdhci_acpi_host *c;
 	struct sdhci_host *host;
 	struct resource *iomem;
@@ -796,10 +796,7 @@ static int sdhci_acpi_probe(struct platform_device *pdev)
 	slot = sdhci_acpi_get_slot(device);
 
 	/* Power on the SDHCI controller and its children */
-	acpi_device_fix_up_power(device);
-	list_for_each_entry(child, &device->children, node)
-		if (child->status.present && child->status.enabled)
-			acpi_device_fix_up_power(child);
+	acpi_device_fix_up_power_extended(device);
 
 	if (sdhci_acpi_byt_defer(dev))
 		return -EPROBE_DEFER;
@@ -832,7 +829,7 @@ static int sdhci_acpi_probe(struct platform_device *pdev)
 	host->ops	= &sdhci_acpi_ops_dflt;
 	host->irq	= platform_get_irq(pdev, 0);
 	if (host->irq < 0) {
-		err = -EINVAL;
+		err = host->irq;
 		goto err_free;
 	}
 
@@ -920,7 +917,7 @@ err_free:
 	return err;
 }
 
-static int sdhci_acpi_remove(struct platform_device *pdev)
+static void sdhci_acpi_remove(struct platform_device *pdev)
 {
 	struct sdhci_acpi_host *c = platform_get_drvdata(pdev);
 	struct device *dev = &pdev->dev;
@@ -942,8 +939,6 @@ static int sdhci_acpi_remove(struct platform_device *pdev)
 		c->slot->free_slot(pdev);
 
 	sdhci_free_host(c->host);
-
-	return 0;
 }
 
 static void __maybe_unused sdhci_acpi_reset_signal_voltage_if_needed(
@@ -1036,7 +1031,7 @@ static struct platform_driver sdhci_acpi_driver = {
 		.pm			= &sdhci_acpi_pm_ops,
 	},
 	.probe	= sdhci_acpi_probe,
-	.remove	= sdhci_acpi_remove,
+	.remove_new = sdhci_acpi_remove,
 };
 
 module_platform_driver(sdhci_acpi_driver);

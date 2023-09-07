@@ -89,9 +89,6 @@ struct intel_dsi {
 	u8 escape_clk_div;
 	u8 dual_link;
 
-	u16 dcs_backlight_ports;
-	u16 dcs_cabc_ports;
-
 	/* RGB or BGR */
 	bool bgr_enabled;
 
@@ -176,5 +173,7 @@ enum drm_mode_status intel_dsi_mode_valid(struct drm_connector *connector,
 struct intel_dsi_host *intel_dsi_host_init(struct intel_dsi *intel_dsi,
 					   const struct mipi_dsi_host_ops *funcs,
 					   enum port port);
+void intel_dsi_wait_panel_power_cycle(struct intel_dsi *intel_dsi);
+void intel_dsi_shutdown(struct intel_encoder *encoder);
 
 #endif /* _INTEL_DSI_H */

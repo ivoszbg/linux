@@ -64,6 +64,7 @@
  *
  */
 
+#include <linux/aperture.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/errno.h>
@@ -1115,7 +1116,7 @@ static int tdfxfb_cursor(struct fb_info *info, struct fb_cursor *cursor)
 		u8 *mask = (u8 *)cursor->mask;
 		int i;
 
-		fb_memset(cursorbase, 0, 1024);
+		fb_memset_io(cursorbase, 0, 1024);
 
 		for (i = 0; i < cursor->image.height; i++) {
 			int h = 0;
@@ -1264,7 +1265,7 @@ static int tdfxfb_setup_ddc_bus(struct tdfxfb_i2c_chan *chan, const char *name,
 {
 	int rc;
 
-	strlcpy(chan->adapter.name, name, sizeof(chan->adapter.name));
+	strscpy(chan->adapter.name, name, sizeof(chan->adapter.name));
 	chan->adapter.owner		= THIS_MODULE;
 	chan->adapter.class		= I2C_CLASS_DDC;
 	chan->adapter.algo_data		= &chan->algo;
@@ -1293,7 +1294,7 @@ static int tdfxfb_setup_i2c_bus(struct tdfxfb_i2c_chan *chan, const char *name,
 {
 	int rc;
 
-	strlcpy(chan->adapter.name, name, sizeof(chan->adapter.name));
+	strscpy(chan->adapter.name, name, sizeof(chan->adapter.name));
 	chan->adapter.owner		= THIS_MODULE;
 	chan->adapter.algo_data		= &chan->algo;
 	chan->adapter.dev.parent	= dev;
@@ -1326,8 +1327,8 @@ static void tdfxfb_create_i2c_busses(struct fb_info *info)
 	par->chan[0].par = par;
 	par->chan[1].par = par;
 
-	tdfxfb_setup_ddc_bus(&par->chan[0], "Voodoo3-DDC", info->dev);
-	tdfxfb_setup_i2c_bus(&par->chan[1], "Voodoo3-I2C", info->dev);
+	tdfxfb_setup_ddc_bus(&par->chan[0], "Voodoo3-DDC", info->device);
+	tdfxfb_setup_i2c_bus(&par->chan[1], "Voodoo3-I2C", info->device);
 }
 
 static void tdfxfb_delete_i2c_busses(struct tdfx_par *par)
@@ -1375,6 +1376,10 @@ static int tdfxfb_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	int err, lpitch;
 	struct fb_monspecs *specs;
 	bool found;
+
+	err = aperture_remove_conflicting_pci_devices(pdev, "tdfxfb");
+	if (err)
+		return err;
 
 	err = pci_enable_device(pdev);
 	if (err) {
@@ -1463,7 +1468,7 @@ static int tdfxfb_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 
 	info->fbops		= &tdfxfb_ops;
 	info->pseudo_palette	= default_par->palette;
-	info->flags		= FBINFO_DEFAULT | FBINFO_HWACCEL_YPAN;
+	info->flags		= FBINFO_HWACCEL_YPAN;
 #ifdef CONFIG_FB_3DFX_ACCEL
 	info->flags		|= FBINFO_HWACCEL_FILLRECT |
 				   FBINFO_HWACCEL_COPYAREA |
@@ -1627,7 +1632,12 @@ static int __init tdfxfb_init(void)
 {
 #ifndef MODULE
 	char *option = NULL;
+#endif
 
+	if (fb_modesetting_disabled("tdfxfb"))
+		return -ENODEV;
+
+#ifndef MODULE
 	if (fb_get_options("tdfxfb", &option))
 		return -ENODEV;
 

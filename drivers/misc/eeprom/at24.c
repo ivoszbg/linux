@@ -761,7 +761,8 @@ static int at24_probe(struct i2c_client *client)
 		pm_runtime_disable(dev);
 		if (!pm_runtime_status_suspended(dev))
 			regulator_disable(at24->vcc_reg);
-		return PTR_ERR(at24->nvmem);
+		return dev_err_probe(dev, PTR_ERR(at24->nvmem),
+				     "failed to register nvmem\n");
 	}
 
 	/*
@@ -791,7 +792,7 @@ static int at24_probe(struct i2c_client *client)
 	return 0;
 }
 
-static int at24_remove(struct i2c_client *client)
+static void at24_remove(struct i2c_client *client)
 {
 	struct at24_data *at24 = i2c_get_clientdata(client);
 
@@ -801,8 +802,6 @@ static int at24_remove(struct i2c_client *client)
 			regulator_disable(at24->vcc_reg);
 		pm_runtime_set_suspended(&client->dev);
 	}
-
-	return 0;
 }
 
 static int __maybe_unused at24_suspend(struct device *dev)
@@ -834,7 +833,7 @@ static struct i2c_driver at24_driver = {
 		.of_match_table = at24_of_match,
 		.acpi_match_table = ACPI_PTR(at24_acpi_ids),
 	},
-	.probe_new = at24_probe,
+	.probe = at24_probe,
 	.remove = at24_remove,
 	.id_table = at24_ids,
 	.flags = I2C_DRV_ACPI_WAIVE_D0_PROBE,

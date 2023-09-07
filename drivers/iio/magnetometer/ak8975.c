@@ -876,9 +876,9 @@ static irqreturn_t ak8975_handle_trigger(int irq, void *p)
 	return IRQ_HANDLED;
 }
 
-static int ak8975_probe(struct i2c_client *client,
-			const struct i2c_device_id *id)
+static int ak8975_probe(struct i2c_client *client)
 {
+	const struct i2c_device_id *id = i2c_client_get_device_id(client);
 	struct ak8975_data *data;
 	struct iio_dev *indio_dev;
 	struct gpio_desc *eoc_gpiod;
@@ -1018,7 +1018,7 @@ power_off:
 	return err;
 }
 
-static int ak8975_remove(struct i2c_client *client)
+static void ak8975_remove(struct i2c_client *client)
 {
 	struct iio_dev *indio_dev = i2c_get_clientdata(client);
 	struct ak8975_data *data = iio_priv(indio_dev);
@@ -1030,8 +1030,6 @@ static int ak8975_remove(struct i2c_client *client)
 	iio_triggered_buffer_cleanup(indio_dev);
 	ak8975_set_mode(data, POWER_DOWN);
 	ak8975_power_off(data);
-
-	return 0;
 }
 
 static int ak8975_runtime_suspend(struct device *dev)

@@ -1196,9 +1196,8 @@ static void rgrp_set_bitmap_flags(struct gfs2_rgrpd *rgd)
  * Returns: errno
  */
 
-int gfs2_rgrp_go_instantiate(struct gfs2_holder *gh)
+int gfs2_rgrp_go_instantiate(struct gfs2_glock *gl)
 {
-	struct gfs2_glock *gl = gh->gh_gl;
 	struct gfs2_rgrpd *rgd = gl->gl_object;
 	struct gfs2_sbd *sdp = rgd->rd_sbd;
 	unsigned int length = rgd->rd_length;
@@ -1880,7 +1879,7 @@ static void try_rgrp_unlink(struct gfs2_rgrpd *rgd, u64 *last_unlinked, u64 skip
 		 */
 		ip = gl->gl_object;
 
-		if (ip || !gfs2_queue_delete_work(gl, 0))
+		if (ip || !gfs2_queue_try_to_evict(gl))
 			gfs2_glock_put(gl);
 		else
 			found++;
@@ -2585,8 +2584,8 @@ void gfs2_free_di(struct gfs2_rgrpd *rgd, struct gfs2_inode *ip)
 
 	gfs2_trans_add_meta(rgd->rd_gl, rgd->rd_bits[0].bi_bh);
 	gfs2_rgrp_out(rgd, rgd->rd_bits[0].bi_bh->b_data);
-	rgrp_unlock_local(rgd);
 	be32_add_cpu(&rgd->rd_rgl->rl_unlinked, -1);
+	rgrp_unlock_local(rgd);
 
 	gfs2_statfs_change(sdp, 0, +1, -1);
 	trace_gfs2_block_alloc(ip, rgd, ip->i_no_addr, 1, GFS2_BLKST_FREE);
@@ -2720,12 +2719,15 @@ void gfs2_rlist_add(struct gfs2_inode *ip, struct gfs2_rgrp_list *rlist,
  * gfs2_rlist_alloc - all RGs have been added to the rlist, now allocate
  *      and initialize an array of glock holders for them
  * @rlist: the list of resource groups
+ * @state: the state we're requesting
+ * @flags: the modifier flags
  *
  * FIXME: Don't use NOFAIL
  *
  */
 
-void gfs2_rlist_alloc(struct gfs2_rgrp_list *rlist)
+void gfs2_rlist_alloc(struct gfs2_rgrp_list *rlist,
+		      unsigned int state, u16 flags)
 {
 	unsigned int x;
 
@@ -2733,8 +2735,8 @@ void gfs2_rlist_alloc(struct gfs2_rgrp_list *rlist)
 				      sizeof(struct gfs2_holder),
 				      GFP_NOFS | __GFP_NOFAIL);
 	for (x = 0; x < rlist->rl_rgrps; x++)
-		gfs2_holder_init(rlist->rl_rgd[x]->rd_gl, LM_ST_EXCLUSIVE,
-				 LM_FLAG_NODE_SCOPE, &rlist->rl_ghs[x]);
+		gfs2_holder_init(rlist->rl_rgd[x]->rd_gl, state, flags,
+				 &rlist->rl_ghs[x]);
 }
 
 /**

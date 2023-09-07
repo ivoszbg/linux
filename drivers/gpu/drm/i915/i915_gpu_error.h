@@ -14,6 +14,7 @@
 
 #include <drm/drm_mm.h>
 
+#include "display/intel_display_device.h"
 #include "gt/intel_engine.h"
 #include "gt/intel_gt_types.h"
 #include "gt/uc/intel_uc_fw.h"
@@ -84,10 +85,17 @@ struct intel_engine_coredump {
 	u32 fault_reg;
 	u64 faddr;
 	u32 rc_psmi; /* sleep state */
+	u32 nopid;
+	u32 excc;
+	u32 cmd_cctl;
+	u32 cscmdop;
+	u32 ctx_sr_ctl;
+	u32 dma_faddr_hi;
+	u32 dma_faddr_lo;
 	struct intel_instdone instdone;
 
 	/* GuC matched capture-lists info */
-	struct intel_guc_state_capture *capture;
+	struct intel_guc_state_capture *guc_capture;
 	struct __guc_capture_parsed_output *guc_capture_node;
 
 	struct i915_gem_context_coredump {
@@ -100,6 +108,7 @@ struct intel_engine_coredump {
 		int active;
 		int guilty;
 		struct i915_sched_attr sched_attr;
+		u32 hwsp_seqno;
 	} context;
 
 	struct i915_vma_coredump *vma;
@@ -116,6 +125,15 @@ struct intel_engine_coredump {
 	} vm_info;
 
 	struct intel_engine_coredump *next;
+};
+
+struct intel_ctb_coredump {
+	u32 raw_head, head;
+	u32 raw_tail, tail;
+	u32 raw_status;
+	u32 desc_offset;
+	u32 cmds_offset;
+	u32 size;
 };
 
 struct intel_gt_coredump {
@@ -143,6 +161,8 @@ struct intel_gt_coredump {
 	u32 gtt_cache;
 	u32 aux_err; /* gen12 */
 	u32 gam_done; /* gen12 */
+	u32 clock_frequency;
+	u32 clock_period_ns;
 
 	/* Display related */
 	u32 derrmr;
@@ -156,8 +176,14 @@ struct intel_gt_coredump {
 	struct intel_uc_coredump {
 		struct intel_uc_fw guc_fw;
 		struct intel_uc_fw huc_fw;
-		struct i915_vma_coredump *guc_log;
-		bool is_guc_capture;
+		struct guc_info {
+			struct intel_ctb_coredump ctb[2];
+			struct i915_vma_coredump *vma_ctb;
+			struct i915_vma_coredump *vma_log;
+			u32 timestamp;
+			u16 last_fence;
+			bool is_guc_capture;
+		} guc;
 	} *uc;
 
 	struct intel_gt_coredump *next;
@@ -184,6 +210,8 @@ struct i915_gpu_coredump {
 
 	struct intel_device_info device_info;
 	struct intel_runtime_info runtime_info;
+	struct intel_display_device_info display_device_info;
+	struct intel_display_runtime_info display_runtime_info;
 	struct intel_driver_caps driver_caps;
 	struct i915_params params;
 
@@ -232,6 +260,16 @@ static inline u32 i915_reset_engine_count(struct i915_gpu_error *error,
 
 #define CORE_DUMP_FLAG_NONE           0x0
 #define CORE_DUMP_FLAG_IS_GUC_CAPTURE BIT(0)
+
+#if IS_ENABLED(CONFIG_DRM_I915_CAPTURE_ERROR) && IS_ENABLED(CONFIG_DRM_I915_DEBUG_GEM)
+void intel_klog_error_capture(struct intel_gt *gt,
+			      intel_engine_mask_t engine_mask);
+#else
+static inline void intel_klog_error_capture(struct intel_gt *gt,
+					    intel_engine_mask_t engine_mask)
+{
+}
+#endif
 
 #if IS_ENABLED(CONFIG_DRM_I915_CAPTURE_ERROR)
 

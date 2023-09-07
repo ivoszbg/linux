@@ -178,6 +178,12 @@ int mhi_init_irq_setup(struct mhi_controller *mhi_cntrl)
 				   "bhi", mhi_cntrl);
 	if (ret)
 		return ret;
+	/*
+	 * IRQs should be enabled during mhi_async_power_up(), so disable them explicitly here.
+	 * Due to the use of IRQF_SHARED flag as default while requesting IRQs, we assume that
+	 * IRQ_NOAUTOEN is not applicable.
+	 */
+	disable_irq(mhi_cntrl->irq[0]);
 
 	for (i = 0; i < mhi_cntrl->total_ev_rings; i++, mhi_event++) {
 		if (mhi_event->offload_ev)
@@ -199,6 +205,8 @@ int mhi_init_irq_setup(struct mhi_controller *mhi_cntrl)
 				mhi_cntrl->irq[mhi_event->irq], i);
 			goto error_request;
 		}
+
+		disable_irq(mhi_cntrl->irq[mhi_event->irq]);
 	}
 
 	return 0;
@@ -508,6 +516,12 @@ int mhi_init_mmio(struct mhi_controller *mhi_cntrl)
 		return -EIO;
 	}
 
+	if (val >= mhi_cntrl->reg_len - (8 * MHI_DEV_WAKE_DB)) {
+		dev_err(dev, "CHDB offset: 0x%x is out of range: 0x%zx\n",
+			val, mhi_cntrl->reg_len - (8 * MHI_DEV_WAKE_DB));
+		return -ERANGE;
+	}
+
 	/* Setup wake db */
 	mhi_cntrl->wake_db = base + val + (8 * MHI_DEV_WAKE_DB);
 	mhi_cntrl->wake_set = false;
@@ -522,6 +536,12 @@ int mhi_init_mmio(struct mhi_controller *mhi_cntrl)
 	if (ret) {
 		dev_err(dev, "Unable to read ERDBOFF register\n");
 		return -EIO;
+	}
+
+	if (val >= mhi_cntrl->reg_len - (8 * mhi_cntrl->total_ev_rings)) {
+		dev_err(dev, "ERDB offset: 0x%x is out of range: 0x%zx\n",
+			val, mhi_cntrl->reg_len - (8 * mhi_cntrl->total_ev_rings));
+		return -ERANGE;
 	}
 
 	/* Setup event db address for each ev_ring */
@@ -739,7 +759,7 @@ static int parse_ch_cfg(struct mhi_controller *mhi_cntrl,
 	 * so to avoid any memory possible allocation failures, vzalloc is
 	 * used here
 	 */
-	mhi_cntrl->mhi_chan = vzalloc(mhi_cntrl->max_chan *
+	mhi_cntrl->mhi_chan = vcalloc(mhi_cntrl->max_chan,
 				      sizeof(*mhi_cntrl->mhi_chan));
 	if (!mhi_cntrl->mhi_chan)
 		return -ENOMEM;
@@ -978,12 +998,16 @@ int mhi_register_controller(struct mhi_controller *mhi_cntrl,
 		goto err_destroy_wq;
 	}
 
+	ret = mhi_init_irq_setup(mhi_cntrl);
+	if (ret)
+		goto err_ida_free;
+
 	/* Register controller with MHI bus */
 	mhi_dev = mhi_alloc_device(mhi_cntrl);
 	if (IS_ERR(mhi_dev)) {
 		dev_err(mhi_cntrl->cntrl_dev, "Failed to allocate MHI device\n");
 		ret = PTR_ERR(mhi_dev);
-		goto err_ida_free;
+		goto error_setup_irq;
 	}
 
 	mhi_dev->dev_type = MHI_DEVICE_CONTROLLER;
@@ -1006,6 +1030,8 @@ int mhi_register_controller(struct mhi_controller *mhi_cntrl,
 
 err_release_dev:
 	put_device(&mhi_dev->dev);
+error_setup_irq:
+	mhi_deinit_free_irq(mhi_cntrl);
 err_ida_free:
 	ida_free(&mhi_controller_ida, mhi_cntrl->index);
 err_destroy_wq:
@@ -1026,6 +1052,7 @@ void mhi_unregister_controller(struct mhi_controller *mhi_cntrl)
 	struct mhi_chan *mhi_chan = mhi_cntrl->mhi_chan;
 	unsigned int i;
 
+	mhi_deinit_free_irq(mhi_cntrl);
 	mhi_destroy_debugfs(mhi_cntrl);
 
 	destroy_workqueue(mhi_cntrl->hiprio_wq);
@@ -1085,7 +1112,7 @@ int mhi_prepare_for_power_up(struct mhi_controller *mhi_cntrl)
 	if (bhi_off >= mhi_cntrl->reg_len) {
 		dev_err(dev, "BHI offset: 0x%x is out of range: 0x%zx\n",
 			bhi_off, mhi_cntrl->reg_len);
-		ret = -EINVAL;
+		ret = -ERANGE;
 		goto error_reg_offset;
 	}
 	mhi_cntrl->bhi = mhi_cntrl->regs + bhi_off;
@@ -1102,7 +1129,7 @@ int mhi_prepare_for_power_up(struct mhi_controller *mhi_cntrl)
 			dev_err(dev,
 				"BHIe offset: 0x%x is out of range: 0x%zx\n",
 				bhie_off, mhi_cntrl->reg_len);
-			ret = -EINVAL;
+			ret = -ERANGE;
 			goto error_reg_offset;
 		}
 		mhi_cntrl->bhie = mhi_cntrl->regs + bhie_off;
@@ -1380,9 +1407,9 @@ void mhi_driver_unregister(struct mhi_driver *mhi_drv)
 }
 EXPORT_SYMBOL_GPL(mhi_driver_unregister);
 
-static int mhi_uevent(struct device *dev, struct kobj_uevent_env *env)
+static int mhi_uevent(const struct device *dev, struct kobj_uevent_env *env)
 {
-	struct mhi_device *mhi_dev = to_mhi_device(dev);
+	const struct mhi_device *mhi_dev = to_mhi_device(dev);
 
 	return add_uevent_var(env, "MODALIAS=" MHI_DEVICE_MODALIAS_FMT,
 					mhi_dev->name);
@@ -1434,4 +1461,4 @@ postcore_initcall(mhi_init);
 module_exit(mhi_exit);
 
 MODULE_LICENSE("GPL v2");
-MODULE_DESCRIPTION("MHI Host Interface");
+MODULE_DESCRIPTION("Modem Host Interface");

@@ -73,7 +73,7 @@ static inline void rmci_maybe_off(void)
  * the display during identify_machine() and MMU_Init()
  *
  * The display is mapped to virtual address 0xD0000000, rather
- * than 1:1, because some some CHRP machines put the frame buffer
+ * than 1:1, because some CHRP machines put the frame buffer
  * in the region starting at 0xC0000000 (PAGE_OFFSET).
  * This mapping is temporary and will disappear as soon as the
  * setup done by MMU_Init() is applied.
@@ -235,7 +235,7 @@ int __init btext_find_display(int allow_nonstdout)
 		return rc;
 
 	for_each_node_by_type(np, "display") {
-		if (of_get_property(np, "linux,opened", NULL)) {
+		if (of_property_read_bool(np, "linux,opened")) {
 			printk("trying %pOF ...\n", np);
 			rc = btext_initialize(np);
 			printk("result: %d\n", rc);

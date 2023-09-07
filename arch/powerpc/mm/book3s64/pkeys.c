@@ -10,6 +10,7 @@
 #include <asm/mmu.h>
 #include <asm/setup.h>
 #include <asm/smp.h>
+#include <asm/firmware.h>
 
 #include <linux/pkeys.h>
 #include <linux/of_fdt.h>
@@ -290,7 +291,7 @@ void setup_kuap(bool disabled)
 
 	if (smp_processor_id() == boot_cpuid) {
 		pr_info("Activating Kernel Userspace Access Prevention\n");
-		cur_cpu_spec->mmu_features |= MMU_FTR_BOOK3S_KUAP;
+		cur_cpu_spec->mmu_features |= MMU_FTR_KUAP;
 	}
 
 	/*

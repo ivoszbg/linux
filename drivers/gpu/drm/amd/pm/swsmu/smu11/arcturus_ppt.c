@@ -573,12 +573,13 @@ static int arcturus_get_clk_table(struct smu_context *smu,
 			struct pp_clock_levels_with_latency *clocks,
 			struct smu_11_0_dpm_table *dpm_table)
 {
-	int i, count;
+	uint32_t i;
 
-	count = (dpm_table->count > MAX_NUM_CLOCKS) ? MAX_NUM_CLOCKS : dpm_table->count;
-	clocks->num_levels = count;
+	clocks->num_levels = min_t(uint32_t,
+				   dpm_table->count,
+				   (uint32_t)PP_MAX_CLOCK_LEVELS);
 
-	for (i = 0; i < count; i++) {
+	for (i = 0; i < clocks->num_levels; i++) {
 		clocks->data[i].clocks_in_khz =
 			dpm_table->dpm_levels[i].value * 1000;
 		clocks->data[i].latency_in_us = 0;
@@ -597,7 +598,7 @@ static int arcturus_get_smu_metrics_data(struct smu_context *smu,
 					 MetricsMember_t member,
 					 uint32_t *value)
 {
-	struct smu_table_context *smu_table= &smu->smu_table;
+	struct smu_table_context *smu_table = &smu->smu_table;
 	SmuMetrics_t *metrics = (SmuMetrics_t *)smu_table->metrics_table;
 	int ret = 0;
 
@@ -1129,7 +1130,7 @@ static int arcturus_read_sensor(struct smu_context *smu,
 						    (uint32_t *)data);
 		*size = 4;
 		break;
-	case AMDGPU_PP_SENSOR_GPU_POWER:
+	case AMDGPU_PP_SENSOR_GPU_AVG_POWER:
 		ret = arcturus_get_smu_metrics_data(smu,
 						    METRICS_AVERAGE_SOCKETPOWER,
 						    (uint32_t *)data);
@@ -1168,6 +1169,7 @@ static int arcturus_read_sensor(struct smu_context *smu,
 		ret = smu_v11_0_get_gfx_vdd(smu, (uint32_t *)data);
 		*size = 4;
 		break;
+	case AMDGPU_PP_SENSOR_GPU_INPUT_POWER:
 	default:
 		ret = -EOPNOTSUPP;
 		break;
@@ -1481,7 +1483,7 @@ static int arcturus_set_power_profile_mode(struct smu_context *smu,
 		return ret;
 
 	if ((profile_mode == PP_SMC_POWER_PROFILE_CUSTOM) &&
-	     (smu_version >=0x360d00)) {
+	     (smu_version >= 0x360d00)) {
 		ret = smu_cmn_update_table(smu,
 				       SMU_TABLE_ACTIVITY_MONITOR_COEFF,
 				       WORKLOAD_PPLIB_CUSTOM_BIT,
@@ -2112,7 +2114,6 @@ static int arcturus_i2c_xfer(struct i2c_adapter *i2c_adap,
 	}
 	mutex_lock(&adev->pm.mutex);
 	r = smu_cmn_update_table(smu, SMU_TABLE_I2C_COMMANDS, 0, req, true);
-	mutex_unlock(&adev->pm.mutex);
 	if (r)
 		goto fail;
 
@@ -2129,6 +2130,7 @@ static int arcturus_i2c_xfer(struct i2c_adapter *i2c_adap,
 	}
 	r = num_msgs;
 fail:
+	mutex_unlock(&adev->pm.mutex);
 	kfree(req);
 	return r;
 }
@@ -2241,8 +2243,16 @@ static void arcturus_get_unique_id(struct smu_context *smu)
 static int arcturus_set_df_cstate(struct smu_context *smu,
 				  enum pp_df_cstate state)
 {
+	struct amdgpu_device *adev = smu->adev;
 	uint32_t smu_version;
 	int ret;
+
+	/*
+	 * Arcturus does not need the cstate disablement
+	 * prerequisite for gpu reset.
+	 */
+	if (amdgpu_in_reset(adev) || adev->in_suspend)
+		return 0;
 
 	ret = smu_cmn_get_smc_version(smu, NULL, &smu_version);
 	if (ret) {
@@ -2509,4 +2519,5 @@ void arcturus_set_ppt_funcs(struct smu_context *smu)
 	smu->table_map = arcturus_table_map;
 	smu->pwr_src_map = arcturus_pwr_src_map;
 	smu->workload_map = arcturus_workload_map;
+	smu_v11_0_set_smu_mailbox_registers(smu);
 }

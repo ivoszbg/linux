@@ -118,7 +118,7 @@
 #define SDA_HOLD_TIME		0x90
 
 /**
- * axxia_i2c_dev - I2C device context
+ * struct axxia_i2c_dev - I2C device context
  * @base: pointer to register struct
  * @msg: pointer to current message
  * @msg_r: pointer to current read message (sequence transfer)
@@ -783,7 +783,7 @@ static int axxia_i2c_probe(struct platform_device *pdev)
 	}
 
 	i2c_set_adapdata(&idev->adapter, idev);
-	strlcpy(idev->adapter.name, pdev->name, sizeof(idev->adapter.name));
+	strscpy(idev->adapter.name, pdev->name, sizeof(idev->adapter.name));
 	idev->adapter.owner = THIS_MODULE;
 	idev->adapter.algo = &axxia_i2c_algo;
 	idev->adapter.bus_recovery_info = &axxia_i2c_recovery_info;
@@ -804,14 +804,12 @@ error_disable_clk:
 	return ret;
 }
 
-static int axxia_i2c_remove(struct platform_device *pdev)
+static void axxia_i2c_remove(struct platform_device *pdev)
 {
 	struct axxia_i2c_dev *idev = platform_get_drvdata(pdev);
 
 	clk_disable_unprepare(idev->i2c_clk);
 	i2c_del_adapter(&idev->adapter);
-
-	return 0;
 }
 
 /* Match table for of_platform binding */
@@ -824,7 +822,7 @@ MODULE_DEVICE_TABLE(of, axxia_i2c_of_match);
 
 static struct platform_driver axxia_i2c_driver = {
 	.probe = axxia_i2c_probe,
-	.remove = axxia_i2c_remove,
+	.remove_new = axxia_i2c_remove,
 	.driver = {
 		.name = "axxia-i2c",
 		.of_match_table = axxia_i2c_of_match,

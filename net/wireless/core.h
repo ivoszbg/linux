@@ -75,7 +75,7 @@ struct cfg80211_registered_device {
 	struct sk_buff *scan_msg;
 	struct list_head sched_scan_req_list;
 	time64_t suspend_at;
-	struct work_struct scan_done_wk;
+	struct wiphy_work scan_done_wk;
 
 	struct genl_info *cur_cmd_info;
 
@@ -95,7 +95,7 @@ struct cfg80211_registered_device {
 	struct cfg80211_coalesce *coalesce;
 
 	struct work_struct destroy_work;
-	struct work_struct sched_scan_stop_wk;
+	struct wiphy_work sched_scan_stop_wk;
 	struct work_struct sched_scan_res_wk;
 
 	struct cfg80211_chan_def radar_chandef;
@@ -107,6 +107,12 @@ struct cfg80211_registered_device {
 	struct work_struct mgmt_registrations_update_wk;
 	/* lock for all wdev lists */
 	spinlock_t mgmt_registrations_lock;
+
+	struct work_struct wiphy_work;
+	struct list_head wiphy_work_list;
+	/* protects the list above */
+	spinlock_t wiphy_work_lock;
+	bool suspended;
 
 	/* must be last because of the way we do wiphy_priv(),
 	 * and it should at least be aligned to NETDEV_ALIGN */
@@ -271,13 +277,15 @@ struct cfg80211_event {
 		} ij;
 		struct {
 			u8 bssid[ETH_ALEN];
+			const u8 *td_bitmap;
+			u8 td_bitmap_len;
 		} pa;
 	};
 };
 
 struct cfg80211_cached_keys {
-	struct key_params params[CFG80211_MAX_WEP_KEYS];
-	u8 data[CFG80211_MAX_WEP_KEYS][WLAN_KEY_LEN_WEP104];
+	struct key_params params[4];
+	u8 data[4][WLAN_KEY_LEN_WEP104];
 	int def;
 };
 
@@ -290,7 +298,7 @@ struct cfg80211_cqm_config {
 	u32 rssi_hyst;
 	s32 last_rssi_event_value;
 	int n_rssi_thresholds;
-	s32 rssi_thresholds[];
+	s32 rssi_thresholds[] __counted_by(n_rssi_thresholds);
 };
 
 void cfg80211_destroy_ifaces(struct cfg80211_registered_device *rdev);
@@ -307,6 +315,7 @@ void cfg80211_bss_expire(struct cfg80211_registered_device *rdev);
 void cfg80211_bss_age(struct cfg80211_registered_device *rdev,
                       unsigned long age_secs);
 void cfg80211_update_assoc_bss_entry(struct wireless_dev *wdev,
+				     unsigned int link,
 				     struct ieee80211_channel *channel);
 
 /* IBSS */
@@ -353,32 +362,25 @@ int cfg80211_leave_ocb(struct cfg80211_registered_device *rdev,
 
 /* AP */
 int __cfg80211_stop_ap(struct cfg80211_registered_device *rdev,
-		       struct net_device *dev, bool notify);
+		       struct net_device *dev, int link,
+		       bool notify);
 int cfg80211_stop_ap(struct cfg80211_registered_device *rdev,
-		     struct net_device *dev, bool notify);
+		     struct net_device *dev, int link,
+		     bool notify);
 
 /* MLME */
 int cfg80211_mlme_auth(struct cfg80211_registered_device *rdev,
 		       struct net_device *dev,
-		       struct ieee80211_channel *chan,
-		       enum nl80211_auth_type auth_type,
-		       const u8 *bssid,
-		       const u8 *ssid, int ssid_len,
-		       const u8 *ie, int ie_len,
-		       const u8 *key, int key_len, int key_idx,
-		       const u8 *auth_data, int auth_data_len);
+		       struct cfg80211_auth_request *req);
 int cfg80211_mlme_assoc(struct cfg80211_registered_device *rdev,
 			struct net_device *dev,
-			struct ieee80211_channel *chan,
-			const u8 *bssid,
-			const u8 *ssid, int ssid_len,
 			struct cfg80211_assoc_request *req);
 int cfg80211_mlme_deauth(struct cfg80211_registered_device *rdev,
 			 struct net_device *dev, const u8 *bssid,
 			 const u8 *ie, int ie_len, u16 reason,
 			 bool local_state_change);
 int cfg80211_mlme_disassoc(struct cfg80211_registered_device *rdev,
-			   struct net_device *dev, const u8 *bssid,
+			   struct net_device *dev, const u8 *ap_addr,
 			   const u8 *ie, int ie_len, u16 reason,
 			   bool local_state_change);
 void cfg80211_mlme_down(struct cfg80211_registered_device *rdev,
@@ -415,7 +417,8 @@ int cfg80211_disconnect(struct cfg80211_registered_device *rdev,
 			bool wextev);
 void __cfg80211_roamed(struct wireless_dev *wdev,
 		       struct cfg80211_roam_info *info);
-void __cfg80211_port_authorized(struct wireless_dev *wdev, const u8 *bssid);
+void __cfg80211_port_authorized(struct wireless_dev *wdev, const u8 *bssid,
+				const u8 *td_bitmap, u8 td_bitmap_len);
 int cfg80211_mgd_wext_connect(struct cfg80211_registered_device *rdev,
 			      struct wireless_dev *wdev);
 void cfg80211_autodisconnect_wk(struct work_struct *work);
@@ -438,7 +441,7 @@ bool cfg80211_valid_key_idx(struct cfg80211_registered_device *rdev,
 int cfg80211_validate_key_settings(struct cfg80211_registered_device *rdev,
 				   struct key_params *params, int key_idx,
 				   bool pairwise, const u8 *mac_addr);
-void __cfg80211_scan_done(struct work_struct *wk);
+void __cfg80211_scan_done(struct wiphy *wiphy, struct wiphy_work *wk);
 void ___cfg80211_scan_done(struct cfg80211_registered_device *rdev,
 			   bool send_message);
 void cfg80211_add_sched_scan_req(struct cfg80211_registered_device *rdev,
@@ -456,6 +459,7 @@ int cfg80211_change_iface(struct cfg80211_registered_device *rdev,
 			  struct net_device *dev, enum nl80211_iftype ntype,
 			  struct vif_params *params);
 void cfg80211_process_rdev_events(struct cfg80211_registered_device *rdev);
+void cfg80211_process_wiphy_works(struct cfg80211_registered_device *rdev);
 void cfg80211_process_wdev_events(struct wireless_dev *wdev);
 
 bool cfg80211_does_bw_fit_range(const struct ieee80211_freq_range *freq_range,
@@ -507,7 +511,11 @@ bool cfg80211_any_wiphy_oper_chan(struct wiphy *wiphy,
 bool cfg80211_beaconing_iface_active(struct wireless_dev *wdev);
 
 bool cfg80211_is_sub_chan(struct cfg80211_chan_def *chandef,
-			  struct ieee80211_channel *chan);
+			  struct ieee80211_channel *chan,
+			  bool primary_only);
+bool cfg80211_wdev_on_sub_chan(struct wireless_dev *wdev,
+			       struct ieee80211_channel *chan,
+			       bool primary_only);
 
 static inline unsigned int elapsed_jiffies_msecs(unsigned long start)
 {
@@ -563,5 +571,11 @@ void cfg80211_cqm_config_free(struct wireless_dev *wdev);
 void cfg80211_release_pmsr(struct wireless_dev *wdev, u32 portid);
 void cfg80211_pmsr_wdev_down(struct wireless_dev *wdev);
 void cfg80211_pmsr_free_wk(struct work_struct *work);
+
+void cfg80211_remove_link(struct wireless_dev *wdev, unsigned int link_id);
+void cfg80211_remove_links(struct wireless_dev *wdev);
+int cfg80211_remove_virtual_intf(struct cfg80211_registered_device *rdev,
+				 struct wireless_dev *wdev);
+void cfg80211_wdev_release_link_bsses(struct wireless_dev *wdev, u16 link_mask);
 
 #endif /* __NET_WIRELESS_CORE_H */

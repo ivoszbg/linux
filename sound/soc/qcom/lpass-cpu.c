@@ -404,18 +404,7 @@ static int lpass_cpu_daiops_prepare(struct snd_pcm_substream *substream,
 	return 0;
 }
 
-const struct snd_soc_dai_ops asoc_qcom_lpass_cpu_dai_ops = {
-	.set_sysclk	= lpass_cpu_daiops_set_sysclk,
-	.startup	= lpass_cpu_daiops_startup,
-	.shutdown	= lpass_cpu_daiops_shutdown,
-	.hw_params	= lpass_cpu_daiops_hw_params,
-	.trigger	= lpass_cpu_daiops_trigger,
-	.prepare	= lpass_cpu_daiops_prepare,
-};
-EXPORT_SYMBOL_GPL(asoc_qcom_lpass_cpu_dai_ops);
-
-int lpass_cpu_pcm_new(struct snd_soc_pcm_runtime *rtd,
-				struct snd_soc_dai *dai)
+static int lpass_cpu_daiops_pcm_new(struct snd_soc_pcm_runtime *rtd, struct snd_soc_dai *dai)
 {
 	int ret;
 	struct snd_soc_dai_driver *drv = dai->driver;
@@ -431,9 +420,8 @@ int lpass_cpu_pcm_new(struct snd_soc_pcm_runtime *rtd,
 
 	return 0;
 }
-EXPORT_SYMBOL_GPL(lpass_cpu_pcm_new);
 
-int asoc_qcom_lpass_cpu_dai_probe(struct snd_soc_dai *dai)
+static int lpass_cpu_daiops_probe(struct snd_soc_dai *dai)
 {
 	struct lpass_data *drvdata = snd_soc_dai_get_drvdata(dai);
 	int ret;
@@ -446,7 +434,29 @@ int asoc_qcom_lpass_cpu_dai_probe(struct snd_soc_dai *dai)
 
 	return ret;
 }
-EXPORT_SYMBOL_GPL(asoc_qcom_lpass_cpu_dai_probe);
+
+const struct snd_soc_dai_ops asoc_qcom_lpass_cpu_dai_ops = {
+	.probe		= lpass_cpu_daiops_probe,
+	.set_sysclk	= lpass_cpu_daiops_set_sysclk,
+	.startup	= lpass_cpu_daiops_startup,
+	.shutdown	= lpass_cpu_daiops_shutdown,
+	.hw_params	= lpass_cpu_daiops_hw_params,
+	.trigger	= lpass_cpu_daiops_trigger,
+	.prepare	= lpass_cpu_daiops_prepare,
+};
+EXPORT_SYMBOL_GPL(asoc_qcom_lpass_cpu_dai_ops);
+
+const struct snd_soc_dai_ops asoc_qcom_lpass_cpu_dai_ops2 = {
+	.pcm_new	= lpass_cpu_daiops_pcm_new,
+	.probe		= lpass_cpu_daiops_probe,
+	.set_sysclk	= lpass_cpu_daiops_set_sysclk,
+	.startup	= lpass_cpu_daiops_startup,
+	.shutdown	= lpass_cpu_daiops_shutdown,
+	.hw_params	= lpass_cpu_daiops_hw_params,
+	.trigger	= lpass_cpu_daiops_trigger,
+	.prepare	= lpass_cpu_daiops_prepare,
+};
+EXPORT_SYMBOL_GPL(asoc_qcom_lpass_cpu_dai_ops2);
 
 static int asoc_qcom_of_xlate_dai_name(struct snd_soc_component *component,
 				   const struct of_phandle_args *args,
@@ -472,6 +482,7 @@ static int asoc_qcom_of_xlate_dai_name(struct snd_soc_component *component,
 static const struct snd_soc_component_driver lpass_cpu_comp_driver = {
 	.name = "lpass-cpu",
 	.of_xlate_dai_name = asoc_qcom_of_xlate_dai_name,
+	.legacy_dai_naming = 1,
 };
 
 static bool lpass_cpu_regmap_writeable(struct device *dev, unsigned int reg)
@@ -781,9 +792,19 @@ static bool lpass_hdmi_regmap_volatile(struct device *dev, unsigned int reg)
 		return true;
 	if (reg == LPASS_HDMI_TX_LEGACY_ADDR(v))
 		return true;
+	if (reg == LPASS_HDMI_TX_VBIT_CTL_ADDR(v))
+		return true;
+	if (reg == LPASS_HDMI_TX_PARITY_ADDR(v))
+		return true;
 
 	for (i = 0; i < v->hdmi_rdma_channels; ++i) {
 		if (reg == LPAIF_HDMI_RDMACURR_REG(v, i))
+			return true;
+		if (reg == LPASS_HDMI_TX_DMA_ADDR(v, i))
+			return true;
+		if (reg == LPASS_HDMI_TX_CH_LSB_ADDR(v, i))
+			return true;
+		if (reg == LPASS_HDMI_TX_CH_MSB_ADDR(v, i))
 			return true;
 	}
 	return false;
@@ -1026,10 +1047,11 @@ static void of_lpass_cpu_parse_dai_data(struct device *dev,
 					struct lpass_data *data)
 {
 	struct device_node *node;
-	int ret, id;
+	int ret, i, id;
 
 	/* Allow all channels by default for backwards compatibility */
-	for (id = 0; id < data->variant->num_dai; id++) {
+	for (i = 0; i < data->variant->num_dai; i++) {
+		id = data->variant->dai_driver[i].id;
 		data->mi2s_playback_sd_mode[id] = LPAIF_I2SCTL_MODE_8CH;
 		data->mi2s_capture_sd_mode[id] = LPAIF_I2SCTL_MODE_8CH;
 	}
@@ -1090,6 +1112,7 @@ int asoc_qcom_lpass_cpu_platform_probe(struct platform_device *pdev)
 	dsp_of_node = of_parse_phandle(pdev->dev.of_node, "qcom,adsp", 0);
 	if (dsp_of_node) {
 		dev_err(dev, "DSP exists and holds audio resources\n");
+		of_node_put(dsp_of_node);
 		return -EBUSY;
 	}
 
@@ -1101,6 +1124,11 @@ int asoc_qcom_lpass_cpu_platform_probe(struct platform_device *pdev)
 	match = of_match_device(dev->driver->of_match_table, dev);
 	if (!match || !match->data)
 		return -EINVAL;
+
+	if (of_device_is_compatible(dev->of_node, "qcom,lpass-cpu-apq8016")) {
+		dev_warn(dev, "%s compatible is deprecated\n",
+			 match->compatible);
+	}
 
 	drvdata->variant = (struct lpass_variant *)match->data;
 	variant = drvdata->variant;

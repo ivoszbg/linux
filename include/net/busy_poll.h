@@ -16,6 +16,7 @@
 #include <linux/sched/clock.h>
 #include <linux/sched/signal.h>
 #include <net/ip.h>
+#include <net/xdp.h>
 
 /*		0 - Reserved to indicate value not set
  *     1..NR_CPUS - Reserved for sender_cpu
@@ -33,7 +34,7 @@ extern unsigned int sysctl_net_busy_poll __read_mostly;
 
 static inline bool net_busy_loop_on(void)
 {
-	return sysctl_net_busy_poll;
+	return READ_ONCE(sysctl_net_busy_poll);
 }
 
 static inline bool sk_can_busy_loop(const struct sock *sk)

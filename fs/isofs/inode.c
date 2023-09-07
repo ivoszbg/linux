@@ -1277,13 +1277,11 @@ static int isofs_read_level3_size(struct inode *inode)
 	} while (more_entries);
 out:
 	kfree(tmpde);
-	if (bh)
-		brelse(bh);
+	brelse(bh);
 	return 0;
 
 out_nomem:
-	if (bh)
-		brelse(bh);
+	brelse(bh);
 	return -ENOMEM;
 
 out_noread:
@@ -1424,13 +1422,8 @@ static int isofs_read_inode(struct inode *inode, int relocated)
 			inode->i_ino, de->flags[-high_sierra]);
 	}
 #endif
-
-	inode->i_mtime.tv_sec =
-	inode->i_atime.tv_sec =
-	inode->i_ctime.tv_sec = iso_date(de->date, high_sierra);
-	inode->i_mtime.tv_nsec =
-	inode->i_atime.tv_nsec =
-	inode->i_ctime.tv_nsec = 0;
+	inode->i_mtime = inode->i_atime =
+		inode_set_ctime(inode, iso_date(de->date, high_sierra), 0);
 
 	ei->i_first_extent = (isonum_733(de->extent) +
 			isonum_711(de->ext_attr_length));
@@ -1486,8 +1479,7 @@ static int isofs_read_inode(struct inode *inode, int relocated)
 	ret = 0;
 out:
 	kfree(tmpde);
-	if (bh)
-		brelse(bh);
+	brelse(bh);
 	return ret;
 
 out_badread:

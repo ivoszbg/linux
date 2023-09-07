@@ -1885,7 +1885,7 @@ static const struct xway_gphy_match_data xrx300_gphy_data = {
 	.ge_firmware_name = "lantiq/xrx300_phy11g_a21.bin",
 };
 
-static const struct of_device_id xway_gphy_match[] = {
+static const struct of_device_id xway_gphy_match[] __maybe_unused = {
 	{ .compatible = "lantiq,xrx200-gphy-fw", .data = NULL },
 	{ .compatible = "lantiq,xrx200a1x-gphy-fw", .data = &xrx200a1x_gphy_data },
 	{ .compatible = "lantiq,xrx200a2x-gphy-fw", .data = &xrx200a2x_gphy_data },
@@ -1989,11 +1989,9 @@ static int gswip_gphy_fw_probe(struct gswip_priv *priv,
 	}
 
 	gphy_fw->reset = of_reset_control_array_get_exclusive(gphy_fw_np);
-	if (IS_ERR(gphy_fw->reset)) {
-		if (PTR_ERR(gphy_fw->reset) != -EPROBE_DEFER)
-			dev_err(dev, "Failed to lookup gphy reset\n");
-		return PTR_ERR(gphy_fw->reset);
-	}
+	if (IS_ERR(gphy_fw->reset))
+		return dev_err_probe(dev, PTR_ERR(gphy_fw->reset),
+				     "Failed to lookup gphy reset\n");
 
 	return gswip_gphy_fw_load(priv, gphy_fw);
 }
@@ -2230,8 +2228,6 @@ static int gswip_remove(struct platform_device *pdev)
 
 	for (i = 0; i < priv->num_gphy_fw; i++)
 		gswip_gphy_fw_remove(priv, &priv->gphy_fw[i]);
-
-	platform_set_drvdata(pdev, NULL);
 
 	return 0;
 }

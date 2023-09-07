@@ -84,8 +84,27 @@ properties:
                 minItems: 1
                 maxItems: 4
 
-    required:
-      - port@0
+      port@1:
+        $ref: /schemas/graph.yaml#/$defs/port-base
+        unevaluatedProperties: false
+        description: connection point for input on the parallel interface
+
+        properties:
+          bus-type:
+            enum: [5, 6]
+
+          endpoint:
+            $ref: video-interfaces.yaml#
+            unevaluatedProperties: false
+
+        required:
+          - bus-type
+
+    anyOf:
+      - required:
+          - port@0
+      - required:
+          - port@1
 
 required:
   - compatible
@@ -193,12 +212,19 @@ examples:
                 compatible = "ovti,ov2685";
                 reg = <0x3c>;
 
-                  port {
-                      ucam_out: endpoint {
-                          remote-endpoint = <&mipi_in_ucam>;
-                          data-lanes = <1>;
-                      };
-                  };
+                clocks = <&cru SCLK_TESTCLKOUT1>;
+                clock-names = "xvclk";
+
+                avdd-supply = <&pp2800_cam>;
+                dovdd-supply = <&pp1800>;
+                dvdd-supply = <&pp1800>;
+
+                port {
+                    ucam_out: endpoint {
+                        remote-endpoint = <&mipi_in_ucam>;
+                        data-lanes = <1>;
+                    };
+                };
             };
         };
     };

@@ -440,7 +440,7 @@ struct rtnexthop {
 /* RTA_VIA */
 struct rtvia {
 	__kernel_sa_family_t	rtvia_family;
-	__u8			rtvia_addr[0];
+	__u8			rtvia_addr[];
 };
 
 /* RTM_CACHEINFO */
@@ -635,6 +635,7 @@ enum {
 	TCA_INGRESS_BLOCK,
 	TCA_EGRESS_BLOCK,
 	TCA_DUMP_FLAGS,
+	TCA_EXT_WARN_MSG,
 	__TCA_MAX
 };
 
@@ -788,6 +789,7 @@ enum {
 	TCA_ROOT_FLAGS,
 	TCA_ROOT_COUNT,
 	TCA_ROOT_TIME_DELTA, /* in msecs */
+	TCA_ROOT_EXT_WARN_MSG,
 	__TCA_ROOT_MAX,
 #define	TCA_ROOT_MAX (__TCA_ROOT_MAX - 1)
 };

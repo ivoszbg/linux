@@ -563,7 +563,7 @@ static int lp50xx_probe(struct i2c_client *client)
 	return lp50xx_probe_dt(led);
 }
 
-static int lp50xx_remove(struct i2c_client *client)
+static void lp50xx_remove(struct i2c_client *client)
 {
 	struct lp50xx *led = i2c_get_clientdata(client);
 	int ret;
@@ -579,8 +579,6 @@ static int lp50xx_remove(struct i2c_client *client)
 	}
 
 	mutex_destroy(&led->lock);
-
-	return 0;
 }
 
 static const struct i2c_device_id lp50xx_id[] = {
@@ -610,7 +608,7 @@ static struct i2c_driver lp50xx_driver = {
 		.name	= "lp50xx",
 		.of_match_table = of_lp50xx_leds_match,
 	},
-	.probe_new	= lp50xx_probe,
+	.probe		= lp50xx_probe,
 	.remove		= lp50xx_remove,
 	.id_table	= lp50xx_id,
 };

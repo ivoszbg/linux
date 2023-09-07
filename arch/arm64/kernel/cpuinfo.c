@@ -33,12 +33,19 @@
 DEFINE_PER_CPU(struct cpuinfo_arm64, cpu_data);
 static struct cpuinfo_arm64 boot_cpu_data;
 
-static const char *icache_policy_str[] = {
-	[ICACHE_POLICY_VPIPT]		= "VPIPT",
-	[ICACHE_POLICY_RESERVED]	= "RESERVED/UNKNOWN",
-	[ICACHE_POLICY_VIPT]		= "VIPT",
-	[ICACHE_POLICY_PIPT]		= "PIPT",
-};
+static inline const char *icache_policy_str(int l1ip)
+{
+	switch (l1ip) {
+	case CTR_EL0_L1Ip_VPIPT:
+		return "VPIPT";
+	case CTR_EL0_L1Ip_VIPT:
+		return "VIPT";
+	case CTR_EL0_L1Ip_PIPT:
+		return "PIPT";
+	default:
+		return "RESERVED/UNKNOWN";
+	}
+}
 
 unsigned long __icache_flags;
 
@@ -107,6 +114,19 @@ static const char *const hwcap_str[] = {
 	[KERNEL_HWCAP_SME_F32F32]	= "smef32f32",
 	[KERNEL_HWCAP_SME_FA64]		= "smefa64",
 	[KERNEL_HWCAP_WFXT]		= "wfxt",
+	[KERNEL_HWCAP_EBF16]		= "ebf16",
+	[KERNEL_HWCAP_SVE_EBF16]	= "sveebf16",
+	[KERNEL_HWCAP_CSSC]		= "cssc",
+	[KERNEL_HWCAP_RPRFM]		= "rprfm",
+	[KERNEL_HWCAP_SVE2P1]		= "sve2p1",
+	[KERNEL_HWCAP_SME2]		= "sme2",
+	[KERNEL_HWCAP_SME2P1]		= "sme2p1",
+	[KERNEL_HWCAP_SME_I16I32]	= "smei16i32",
+	[KERNEL_HWCAP_SME_BI32I32]	= "smebi32i32",
+	[KERNEL_HWCAP_SME_B16B16]	= "smeb16b16",
+	[KERNEL_HWCAP_SME_F16F16]	= "smef16f16",
+	[KERNEL_HWCAP_MOPS]		= "mops",
+	[KERNEL_HWCAP_HBC]		= "hbc",
 };
 
 #ifdef CONFIG_COMPAT
@@ -134,6 +154,12 @@ static const char *const compat_hwcap_str[] = {
 	[COMPAT_KERNEL_HWCAP(VFPD32)]	= NULL,	/* Not possible on arm64 */
 	[COMPAT_KERNEL_HWCAP(LPAE)]	= "lpae",
 	[COMPAT_KERNEL_HWCAP(EVTSTRM)]	= "evtstrm",
+	[COMPAT_KERNEL_HWCAP(FPHP)]	= "fphp",
+	[COMPAT_KERNEL_HWCAP(ASIMDHP)]	= "asimdhp",
+	[COMPAT_KERNEL_HWCAP(ASIMDDP)]	= "asimddp",
+	[COMPAT_KERNEL_HWCAP(ASIMDFHM)]	= "asimdfhm",
+	[COMPAT_KERNEL_HWCAP(ASIMDBF16)] = "asimdbf16",
+	[COMPAT_KERNEL_HWCAP(I8MM)]	= "i8mm",
 };
 
 #define COMPAT_KERNEL_HWCAP2(x)	const_ilog2(COMPAT_HWCAP2_ ## x)
@@ -143,6 +169,8 @@ static const char *const compat_hwcap2_str[] = {
 	[COMPAT_KERNEL_HWCAP2(SHA1)]	= "sha1",
 	[COMPAT_KERNEL_HWCAP2(SHA2)]	= "sha2",
 	[COMPAT_KERNEL_HWCAP2(CRC32)]	= "crc32",
+	[COMPAT_KERNEL_HWCAP2(SB)]	= "sb",
+	[COMPAT_KERNEL_HWCAP2(SSBS)]	= "ssbs",
 };
 #endif /* CONFIG_COMPAT */
 
@@ -267,6 +295,7 @@ static struct kobj_type cpuregs_kobj_type = {
 
 CPUREGS_ATTR_RO(midr_el1, midr);
 CPUREGS_ATTR_RO(revidr_el1, revidr);
+CPUREGS_ATTR_RO(smidr_el1, smidr);
 
 static struct attribute *cpuregs_id_attrs[] = {
 	&cpuregs_attr_midr_el1.attr,
@@ -276,6 +305,16 @@ static struct attribute *cpuregs_id_attrs[] = {
 
 static const struct attribute_group cpuregs_attr_group = {
 	.attrs = cpuregs_id_attrs,
+	.name = "identification"
+};
+
+static struct attribute *sme_cpuregs_id_attrs[] = {
+	&cpuregs_attr_smidr_el1.attr,
+	NULL
+};
+
+static const struct attribute_group sme_cpuregs_attr_group = {
+	.attrs = sme_cpuregs_id_attrs,
 	.name = "identification"
 };
 
@@ -296,6 +335,8 @@ static int cpuid_cpu_online(unsigned int cpu)
 	rc = sysfs_create_group(&info->kobj, &cpuregs_attr_group);
 	if (rc)
 		kobject_del(&info->kobj);
+	if (system_supports_sme())
+		rc = sysfs_merge_group(&info->kobj, &sme_cpuregs_attr_group);
 out:
 	return rc;
 }
@@ -342,19 +383,19 @@ static void cpuinfo_detect_icache_policy(struct cpuinfo_arm64 *info)
 	u32 l1ip = CTR_L1IP(info->reg_ctr);
 
 	switch (l1ip) {
-	case ICACHE_POLICY_PIPT:
+	case CTR_EL0_L1Ip_PIPT:
 		break;
-	case ICACHE_POLICY_VPIPT:
+	case CTR_EL0_L1Ip_VPIPT:
 		set_bit(ICACHEF_VPIPT, &__icache_flags);
 		break;
-	case ICACHE_POLICY_RESERVED:
-	case ICACHE_POLICY_VIPT:
+	case CTR_EL0_L1Ip_VIPT:
+	default:
 		/* Assume aliasing */
 		set_bit(ICACHEF_ALIASING, &__icache_flags);
 		break;
 	}
 
-	pr_info("Detected %s I-cache on CPU%d\n", icache_policy_str[l1ip], cpu);
+	pr_info("Detected %s I-cache on CPU%d\n", icache_policy_str(l1ip), cpu);
 }
 
 static void __cpuinfo_store_cpu_32bit(struct cpuinfo_32bit *info)
@@ -407,6 +448,7 @@ static void __cpuinfo_store_cpu(struct cpuinfo_arm64 *info)
 	info->reg_id_aa64mmfr0 = read_cpuid(ID_AA64MMFR0_EL1);
 	info->reg_id_aa64mmfr1 = read_cpuid(ID_AA64MMFR1_EL1);
 	info->reg_id_aa64mmfr2 = read_cpuid(ID_AA64MMFR2_EL1);
+	info->reg_id_aa64mmfr3 = read_cpuid(ID_AA64MMFR3_EL1);
 	info->reg_id_aa64pfr0 = read_cpuid(ID_AA64PFR0_EL1);
 	info->reg_id_aa64pfr1 = read_cpuid(ID_AA64PFR1_EL1);
 	info->reg_id_aa64zfr0 = read_cpuid(ID_AA64ZFR0_EL1);
@@ -417,14 +459,6 @@ static void __cpuinfo_store_cpu(struct cpuinfo_arm64 *info)
 
 	if (id_aa64pfr0_32bit_el0(info->reg_id_aa64pfr0))
 		__cpuinfo_store_cpu_32bit(&info->aarch32);
-
-	if (IS_ENABLED(CONFIG_ARM64_SVE) &&
-	    id_aa64pfr0_sve(info->reg_id_aa64pfr0))
-		info->reg_zcr = read_zcr_features();
-
-	if (IS_ENABLED(CONFIG_ARM64_SME) &&
-	    id_aa64pfr1_sme(info->reg_id_aa64pfr1))
-		info->reg_smcr = read_smcr_features();
 
 	cpuinfo_detect_icache_policy(info);
 }

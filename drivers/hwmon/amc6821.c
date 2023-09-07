@@ -809,7 +809,7 @@ static int amc6821_detect(
 	}
 
 	dev_info(&adapter->dev, "amc6821: chip found at 0x%02x.\n", address);
-	strlcpy(info->type, "amc6821", I2C_NAME_SIZE);
+	strscpy(info->type, "amc6821", I2C_NAME_SIZE);
 
 	return 0;
 }
@@ -939,7 +939,7 @@ static struct i2c_driver amc6821_driver = {
 	.driver = {
 		.name	= "amc6821",
 	},
-	.probe_new = amc6821_probe,
+	.probe = amc6821_probe,
 	.id_table = amc6821_id,
 	.detect = amc6821_detect,
 	.address_list = normal_i2c,

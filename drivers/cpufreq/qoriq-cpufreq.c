@@ -275,6 +275,7 @@ static int qoriq_cpufreq_probe(struct platform_device *pdev)
 
 	np = of_find_matching_node(NULL, qoriq_cpufreq_blacklist);
 	if (np) {
+		of_node_put(np);
 		dev_info(&pdev->dev, "Disabling due to erratum A-008083");
 		return -ENODEV;
 	}
@@ -287,11 +288,9 @@ static int qoriq_cpufreq_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static int qoriq_cpufreq_remove(struct platform_device *pdev)
+static void qoriq_cpufreq_remove(struct platform_device *pdev)
 {
 	cpufreq_unregister_driver(&qoriq_cpufreq_driver);
-
-	return 0;
 }
 
 static struct platform_driver qoriq_cpufreq_platform_driver = {
@@ -299,7 +298,7 @@ static struct platform_driver qoriq_cpufreq_platform_driver = {
 		.name = "qoriq-cpufreq",
 	},
 	.probe = qoriq_cpufreq_probe,
-	.remove = qoriq_cpufreq_remove,
+	.remove_new = qoriq_cpufreq_remove,
 };
 module_platform_driver(qoriq_cpufreq_platform_driver);
 

@@ -3,7 +3,7 @@
 // This file is provided under a dual BSD/GPLv2 license. When using or
 // redistributing this file, you may do so under either license.
 //
-// Copyright(c) 2021 Advanced Micro Devices, Inc.
+// Copyright(c) 2021, 2023 Advanced Micro Devices, Inc.
 //
 // Authors: Ajit Kumar Pandey <AjitKumar.Pandey@amd.com>
 
@@ -30,9 +30,10 @@
 int acp_dsp_block_read(struct snd_sof_dev *sdev, enum snd_sof_fw_blk_type blk_type,
 		       u32 offset, void *dest, size_t size)
 {
+	const struct sof_amd_acp_desc *desc = get_chip_info(sdev->pdata);
 	switch (blk_type) {
 	case SOF_FW_BLK_TYPE_SRAM:
-		offset = offset - ACP_SCRATCH_MEMORY_ADDRESS;
+		offset = offset - desc->sram_pte_offset;
 		memcpy_from_scratch(sdev, offset, dest, size);
 		break;
 	default:
@@ -47,8 +48,8 @@ EXPORT_SYMBOL_NS(acp_dsp_block_read, SND_SOC_SOF_AMD_COMMON);
 int acp_dsp_block_write(struct snd_sof_dev *sdev, enum snd_sof_fw_blk_type blk_type,
 			u32 offset, void *src, size_t size)
 {
-	struct snd_sof_pdata *plat_data = sdev->pdata;
 	struct pci_dev *pci = to_pci_dev(sdev->dev);
+	const struct sof_amd_acp_desc *desc = get_chip_info(sdev->pdata);
 	struct acp_dev_data *adata;
 	void *dest;
 	u32 dma_size, page_count;
@@ -59,7 +60,7 @@ int acp_dsp_block_write(struct snd_sof_dev *sdev, enum snd_sof_fw_blk_type blk_t
 	switch (blk_type) {
 	case SOF_FW_BLK_TYPE_IRAM:
 		if (!adata->bin_buf) {
-			size_fw = plat_data->fw->size;
+			size_fw = sdev->basefw.fw->size;
 			page_count = PAGE_ALIGN(size_fw) >> PAGE_SHIFT;
 			dma_size = page_count * ACP_PAGE_SIZE;
 			adata->bin_buf = dma_alloc_coherent(&pci->dev, dma_size,
@@ -84,7 +85,7 @@ int acp_dsp_block_write(struct snd_sof_dev *sdev, enum snd_sof_fw_blk_type blk_t
 		adata->fw_data_bin_size = size + offset;
 		break;
 	case SOF_FW_BLK_TYPE_SRAM:
-		offset = offset - ACP_SCRATCH_MEMORY_ADDRESS;
+		offset = offset - desc->sram_pte_offset;
 		memcpy_to_scratch(sdev, offset, src, size);
 		return 0;
 	default:
@@ -105,13 +106,12 @@ EXPORT_SYMBOL_NS(acp_get_bar_index, SND_SOC_SOF_AMD_COMMON);
 
 static void configure_pte_for_fw_loading(int type, int num_pages, struct acp_dev_data *adata)
 {
-	struct snd_sof_dev *sdev;
+	struct snd_sof_dev *sdev = adata->dev;
+	const struct sof_amd_acp_desc *desc = get_chip_info(sdev->pdata);
 	unsigned int low, high;
 	dma_addr_t addr;
 	u16 page_idx;
 	u32 offset;
-
-	sdev = adata->dev;
 
 	switch (type) {
 	case FW_BIN:
@@ -129,7 +129,7 @@ static void configure_pte_for_fw_loading(int type, int num_pages, struct acp_dev
 
 	/* Group Enable */
 	snd_sof_dsp_write(sdev, ACP_DSP_BAR, ACPAXI2AXI_ATU_BASE_ADDR_GRP_1,
-			  ACP_SRAM_PTE_OFFSET | BIT(31));
+			  desc->sram_pte_offset | BIT(31));
 	snd_sof_dsp_write(sdev, ACP_DSP_BAR, ACPAXI2AXI_ATU_PAGE_SIZE_GRP_1,
 			  PAGE_SIZE_4K_ENABLE);
 
@@ -151,14 +151,18 @@ static void configure_pte_for_fw_loading(int type, int num_pages, struct acp_dev
 int acp_dsp_pre_fw_run(struct snd_sof_dev *sdev)
 {
 	struct pci_dev *pci = to_pci_dev(sdev->dev);
-	struct snd_sof_pdata *plat_data = sdev->pdata;
+	const struct sof_amd_acp_desc *desc = get_chip_info(sdev->pdata);
 	struct acp_dev_data *adata;
 	unsigned int src_addr, size_fw;
 	u32 page_count, dma_size;
 	int ret;
 
 	adata = sdev->pdata->hw_pdata;
-	size_fw = adata->fw_bin_size;
+
+	if (adata->signed_fw_image)
+		size_fw = adata->fw_bin_size - ACP_FIRMWARE_SIGNATURE;
+	else
+		size_fw = adata->fw_bin_size;
 
 	page_count = PAGE_ALIGN(size_fw) >> PAGE_SHIFT;
 	adata->fw_bin_page_count = page_count;
@@ -184,8 +188,14 @@ int acp_dsp_pre_fw_run(struct snd_sof_dev *sdev)
 	if (ret < 0)
 		dev_err(sdev->dev, "acp dma transfer status: %d\n", ret);
 
+	if (desc->rev > 3) {
+		/* Cache Window enable */
+		snd_sof_dsp_write(sdev, ACP_DSP_BAR, ACP_DSP0_CACHE_OFFSET0, desc->sram_pte_offset);
+		snd_sof_dsp_write(sdev, ACP_DSP_BAR, ACP_DSP0_CACHE_SIZE0, SRAM1_SIZE | BIT(31));
+	}
+
 	/* Free memory once DMA is complete */
-	dma_size =  (PAGE_ALIGN(plat_data->fw->size) >> PAGE_SHIFT) * ACP_PAGE_SIZE;
+	dma_size =  (PAGE_ALIGN(sdev->basefw.fw->size) >> PAGE_SHIFT) * ACP_PAGE_SIZE;
 	dma_free_coherent(&pci->dev, dma_size, adata->bin_buf, adata->sha_dma_addr);
 	dma_free_coherent(&pci->dev, ACP_DEFAULT_DRAM_LENGTH, adata->data_buf, adata->dma_addr);
 	adata->bin_buf = NULL;
@@ -197,12 +207,51 @@ EXPORT_SYMBOL_NS(acp_dsp_pre_fw_run, SND_SOC_SOF_AMD_COMMON);
 
 int acp_sof_dsp_run(struct snd_sof_dev *sdev)
 {
+	struct acp_dev_data *adata = sdev->pdata->hw_pdata;
+	const struct sof_amd_acp_desc *desc = get_chip_info(sdev->pdata);
 	int val;
 
 	snd_sof_dsp_write(sdev, ACP_DSP_BAR, ACP_DSP0_RUNSTALL, ACP_DSP_RUN);
 	val = snd_sof_dsp_read(sdev, ACP_DSP_BAR, ACP_DSP0_RUNSTALL);
 	dev_dbg(sdev->dev, "ACP_DSP0_RUNSTALL : 0x%0x\n", val);
 
+	/* Some platforms won't support fusion DSP,keep offset zero for no support */
+	if (desc->fusion_dsp_offset && adata->enable_fw_debug) {
+		snd_sof_dsp_write(sdev, ACP_DSP_BAR, desc->fusion_dsp_offset, ACP_DSP_RUN);
+		val = snd_sof_dsp_read(sdev, ACP_DSP_BAR, desc->fusion_dsp_offset);
+		dev_dbg(sdev->dev, "ACP_DSP0_FUSION_RUNSTALL : 0x%0x\n", val);
+	}
 	return 0;
 }
 EXPORT_SYMBOL_NS(acp_sof_dsp_run, SND_SOC_SOF_AMD_COMMON);
+
+int acp_sof_load_signed_firmware(struct snd_sof_dev *sdev)
+{
+	struct snd_sof_pdata *plat_data = sdev->pdata;
+	struct acp_dev_data *adata = plat_data->hw_pdata;
+	int ret;
+
+	ret = request_firmware(&sdev->basefw.fw, adata->fw_code_bin, sdev->dev);
+	if (ret < 0) {
+		dev_err(sdev->dev, "sof signed firmware code bin is missing\n");
+		return ret;
+	} else {
+		dev_dbg(sdev->dev, "request_firmware %s successful\n", adata->fw_code_bin);
+	}
+	ret = snd_sof_dsp_block_write(sdev, SOF_FW_BLK_TYPE_IRAM, 0,
+				      (void *)sdev->basefw.fw->data, sdev->basefw.fw->size);
+
+	ret = request_firmware(&adata->fw_dbin, adata->fw_data_bin, sdev->dev);
+	if (ret < 0) {
+		dev_err(sdev->dev, "sof signed firmware data bin is missing\n");
+		return ret;
+
+	} else {
+		dev_dbg(sdev->dev, "request_firmware %s successful\n", adata->fw_data_bin);
+	}
+
+	ret = snd_sof_dsp_block_write(sdev, SOF_FW_BLK_TYPE_DRAM, 0,
+				      (void *)adata->fw_dbin->data, adata->fw_dbin->size);
+	return ret;
+}
+EXPORT_SYMBOL_NS(acp_sof_load_signed_firmware, SND_SOC_SOF_AMD_COMMON);

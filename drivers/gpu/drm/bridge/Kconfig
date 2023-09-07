@@ -15,17 +15,6 @@ config DRM_PANEL_BRIDGE
 menu "Display Interface Bridges"
 	depends on DRM && DRM_BRIDGE
 
-config DRM_CDNS_DSI
-	tristate "Cadence DPI/DSI bridge"
-	select DRM_KMS_HELPER
-	select DRM_MIPI_DSI
-	select DRM_PANEL_BRIDGE
-	select GENERIC_PHY_MIPI_DPHY
-	depends on OF
-	help
-	  Support Cadence DPI to DSI bridge. This is an internal
-	  bridge and is meant to be directly embedded in a SoC.
-
 config DRM_CHIPONE_ICN6211
 	tristate "Chipone ICN6211 MIPI-DSI/RGB Converter bridge"
 	depends on OF
@@ -78,23 +67,26 @@ config DRM_DISPLAY_CONNECTOR
 config DRM_FSL_LDB
 	tristate "Freescale i.MX8MP LDB bridge"
 	depends on OF
+	depends on ARCH_MXC || COMPILE_TEST
 	select DRM_KMS_HELPER
 	select DRM_PANEL_BRIDGE
 	help
 	  Support for i.MX8MP DPI-to-LVDS on-SoC encoder.
 
 config DRM_ITE_IT6505
-        tristate "ITE IT6505 DisplayPort bridge"
-        depends on OF
+	tristate "ITE IT6505 DisplayPort bridge"
+	depends on OF
 	select DRM_DISPLAY_DP_HELPER
 	select DRM_DISPLAY_HDCP_HELPER
 	select DRM_DISPLAY_HELPER
-        select DRM_DP_AUX_BUS
-        select DRM_KMS_HELPER
-        select DRM_DP_HELPER
-        select EXTCON
-        help
-          ITE IT6505 DisplayPort bridge chip driver.
+	select DRM_DP_AUX_BUS
+	select DRM_KMS_HELPER
+	select DRM_DP_HELPER
+	select EXTCON
+	select CRYPTO
+	select CRYPTO_HASH
+	help
+	  ITE IT6505 DisplayPort bridge chip driver.
 
 config DRM_LONTIUM_LT8912B
 	tristate "Lontium LT8912B DSI/HDMI bridge"
@@ -228,6 +220,19 @@ config DRM_PARADE_PS8640
 	  The PS8640 is a high-performance and low-power
 	  MIPI DSI to eDP converter
 
+config DRM_SAMSUNG_DSIM
+	tristate "Samsung MIPI DSIM bridge driver"
+	depends on COMMON_CLK
+	depends on OF && HAS_IOMEM
+	select DRM_KMS_HELPER
+	select DRM_MIPI_DSI
+	select DRM_PANEL_BRIDGE
+	select GENERIC_PHY_MIPI_DPHY
+	help
+	  The Samsung MIPI DSIM bridge controller driver.
+	  This MIPI DSIM bridge can be found it on Exynos SoCs and
+	  NXP's i.MX8M Mini/Nano.
+
 config DRM_SIL_SII8620
 	tristate "Silicon Image SII8620 HDMI/MHL bridge"
 	depends on OF
@@ -321,6 +326,22 @@ config DRM_TOSHIBA_TC358775
 	help
 	  Toshiba TC358775 DSI/LVDS bridge chip driver.
 
+config DRM_TI_DLPC3433
+	tristate "TI DLPC3433 Display controller"
+	depends on DRM && DRM_PANEL
+	depends on OF
+	select DRM_MIPI_DSI
+	help
+	  TI DLPC3433 is a MIPI DSI based display controller bridge
+	  for processing high resolution DMD based projectors.
+
+	  It has a flexible configuration of MIPI DSI and DPI signal
+	  input that produces a DMD output in RGB565, RGB666, RGB888
+	  formats.
+
+	  It supports up to 720p resolution with 60 and 120 Hz refresh
+	  rates.
+
 config DRM_TI_TFP410
 	tristate "TI TFP410 DVI/HDMI bridge"
 	depends on OF
@@ -365,6 +386,8 @@ source "drivers/gpu/drm/bridge/analogix/Kconfig"
 source "drivers/gpu/drm/bridge/adv7511/Kconfig"
 
 source "drivers/gpu/drm/bridge/cadence/Kconfig"
+
+source "drivers/gpu/drm/bridge/imx/Kconfig"
 
 source "drivers/gpu/drm/bridge/synopsys/Kconfig"
 

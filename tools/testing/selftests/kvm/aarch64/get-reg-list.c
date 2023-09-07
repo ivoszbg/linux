@@ -48,6 +48,34 @@ struct reg_sublist {
 	__u64 rejects_set_n;
 };
 
+struct feature_id_reg {
+	__u64 reg;
+	__u64 id_reg;
+	__u64 feat_shift;
+	__u64 feat_min;
+};
+
+static struct feature_id_reg feat_id_regs[] = {
+	{
+		ARM64_SYS_REG(3, 0, 2, 0, 3),	/* TCR2_EL1 */
+		ARM64_SYS_REG(3, 0, 0, 7, 3),	/* ID_AA64MMFR3_EL1 */
+		0,
+		1
+	},
+	{
+		ARM64_SYS_REG(3, 0, 10, 2, 2),	/* PIRE0_EL1 */
+		ARM64_SYS_REG(3, 0, 0, 7, 3),	/* ID_AA64MMFR3_EL1 */
+		4,
+		1
+	},
+	{
+		ARM64_SYS_REG(3, 0, 10, 2, 3),	/* PIR_EL1 */
+		ARM64_SYS_REG(3, 0, 0, 7, 3),	/* ID_AA64MMFR3_EL1 */
+		4,
+		1
+	}
+};
+
 struct vcpu_config {
 	char *name;
 	struct reg_sublist sublists[];
@@ -68,7 +96,8 @@ static int vcpu_configs_n;
 
 #define for_each_missing_reg(i)							\
 	for ((i) = 0; (i) < blessed_n; ++(i))					\
-		if (!find_reg(reg_list->reg, reg_list->n, blessed_reg[i]))
+		if (!find_reg(reg_list->reg, reg_list->n, blessed_reg[i]))	\
+			if (check_supported_feat_reg(vcpu, blessed_reg[i]))
 
 #define for_each_new_reg(i)							\
 	for_each_reg_filtered(i)						\
@@ -130,6 +159,25 @@ static bool find_reg(__u64 regs[], __u64 nr_regs, __u64 reg)
 		if (reg == regs[i])
 			return true;
 	return false;
+}
+
+static bool check_supported_feat_reg(struct kvm_vcpu *vcpu, __u64 reg)
+{
+	int i, ret;
+	__u64 data, feat_val;
+
+	for (i = 0; i < ARRAY_SIZE(feat_id_regs); i++) {
+		if (feat_id_regs[i].reg == reg) {
+			ret = __vcpu_get_reg(vcpu, feat_id_regs[i].id_reg, &data);
+			if (ret < 0)
+				return false;
+
+			feat_val = ((data >> feat_id_regs[i].feat_shift) & 0xf);
+			return feat_val >= feat_id_regs[i].feat_min;
+		}
+	}
+
+	return true;
 }
 
 static const char *str_with_index(const char *template, __u64 index)
@@ -377,7 +425,7 @@ static void prepare_vcpu_init(struct vcpu_config *c, struct kvm_vcpu_init *init)
 			init->features[s->feature / 32] |= 1 << (s->feature % 32);
 }
 
-static void finalize_vcpu(struct kvm_vm *vm, uint32_t vcpuid, struct vcpu_config *c)
+static void finalize_vcpu(struct kvm_vcpu *vcpu, struct vcpu_config *c)
 {
 	struct reg_sublist *s;
 	int feature;
@@ -385,7 +433,7 @@ static void finalize_vcpu(struct kvm_vm *vm, uint32_t vcpuid, struct vcpu_config
 	for_each_sublist(c, s) {
 		if (s->finalize) {
 			feature = s->feature;
-			vcpu_ioctl(vm, vcpuid, KVM_ARM_VCPU_FINALIZE, &feature);
+			vcpu_ioctl(vcpu, KVM_ARM_VCPU_FINALIZE, &feature);
 		}
 	}
 }
@@ -395,10 +443,12 @@ static void check_supported(struct vcpu_config *c)
 	struct reg_sublist *s;
 
 	for_each_sublist(c, s) {
-		if (s->capability && !kvm_check_cap(s->capability)) {
-			fprintf(stderr, "%s: %s not available, skipping tests\n", config_name(c), s->name);
-			exit(KSFT_SKIP);
-		}
+		if (!s->capability)
+			continue;
+
+		__TEST_REQUIRE(kvm_has_cap(s->capability),
+			       "%s: %s not available, skipping tests\n",
+			       config_name(c), s->name);
 	}
 }
 
@@ -411,17 +461,19 @@ static void run_test(struct vcpu_config *c)
 	struct kvm_vcpu_init init = { .target = -1, };
 	int new_regs = 0, missing_regs = 0, i, n;
 	int failed_get = 0, failed_set = 0, failed_reject = 0;
+	struct kvm_vcpu *vcpu;
 	struct kvm_vm *vm;
 	struct reg_sublist *s;
 
 	check_supported(c);
 
-	vm = vm_create(VM_MODE_DEFAULT, DEFAULT_GUEST_PHY_PAGES, O_RDWR);
+	vm = vm_create_barebones();
 	prepare_vcpu_init(c, &init);
-	aarch64_vcpu_add_default(vm, 0, &init, NULL);
-	finalize_vcpu(vm, 0, c);
+	vcpu = __vm_vcpu_add(vm, 0);
+	aarch64_vcpu_setup(vcpu, &init);
+	finalize_vcpu(vcpu, c);
 
-	reg_list = vcpu_get_reg_list(vm, 0);
+	reg_list = vcpu_get_reg_list(vcpu);
 
 	if (fixup_core_regs)
 		core_reg_fixup();
@@ -457,7 +509,7 @@ static void run_test(struct vcpu_config *c)
 		bool reject_reg = false;
 		int ret;
 
-		ret = _vcpu_ioctl(vm, 0, KVM_GET_ONE_REG, &reg);
+		ret = __vcpu_get_reg(vcpu, reg_list->reg[i], &addr);
 		if (ret) {
 			printf("%s: Failed to get ", config_name(c));
 			print_reg(c, reg.id);
@@ -469,7 +521,7 @@ static void run_test(struct vcpu_config *c)
 		for_each_sublist(c, s) {
 			if (s->rejects_set && find_reg(s->rejects_set, s->rejects_set_n, reg.id)) {
 				reject_reg = true;
-				ret = _vcpu_ioctl(vm, 0, KVM_SET_ONE_REG, &reg);
+				ret = __vcpu_ioctl(vcpu, KVM_SET_ONE_REG, &reg);
 				if (ret != -1 || errno != EPERM) {
 					printf("%s: Failed to reject (ret=%d, errno=%d) ", config_name(c), ret, errno);
 					print_reg(c, reg.id);
@@ -481,7 +533,7 @@ static void run_test(struct vcpu_config *c)
 		}
 
 		if (!reject_reg) {
-			ret = _vcpu_ioctl(vm, 0, KVM_SET_ONE_REG, &reg);
+			ret = __vcpu_ioctl(vcpu, KVM_SET_ONE_REG, &reg);
 			if (ret) {
 				printf("%s: Failed to set ", config_name(c));
 				print_reg(c, reg.id);
@@ -647,7 +699,7 @@ int main(int ac, char **av)
  * The current blessed list was primed with the output of kernel version
  * v4.15 with --core-reg-fixup and then later updated with new registers.
  *
- * The blessed list is up to date with kernel version v5.13-rc3
+ * The blessed list is up to date with kernel version v6.4 (or so we hope)
  */
 static __u64 base_regs[] = {
 	KVM_REG_ARM64 | KVM_REG_SIZE_U64 | KVM_REG_ARM_CORE | KVM_REG_ARM_CORE_REG(regs.regs[0]),
@@ -803,10 +855,10 @@ static __u64 base_regs[] = {
 	ARM64_SYS_REG(3, 0, 0, 3, 7),
 	ARM64_SYS_REG(3, 0, 0, 4, 0),	/* ID_AA64PFR0_EL1 */
 	ARM64_SYS_REG(3, 0, 0, 4, 1),	/* ID_AA64PFR1_EL1 */
-	ARM64_SYS_REG(3, 0, 0, 4, 2),
+	ARM64_SYS_REG(3, 0, 0, 4, 2),	/* ID_AA64PFR2_EL1 */
 	ARM64_SYS_REG(3, 0, 0, 4, 3),
 	ARM64_SYS_REG(3, 0, 0, 4, 4),	/* ID_AA64ZFR0_EL1 */
-	ARM64_SYS_REG(3, 0, 0, 4, 5),
+	ARM64_SYS_REG(3, 0, 0, 4, 5),	/* ID_AA64SMFR0_EL1 */
 	ARM64_SYS_REG(3, 0, 0, 4, 6),
 	ARM64_SYS_REG(3, 0, 0, 4, 7),
 	ARM64_SYS_REG(3, 0, 0, 5, 0),	/* ID_AA64DFR0_EL1 */
@@ -819,7 +871,7 @@ static __u64 base_regs[] = {
 	ARM64_SYS_REG(3, 0, 0, 5, 7),
 	ARM64_SYS_REG(3, 0, 0, 6, 0),	/* ID_AA64ISAR0_EL1 */
 	ARM64_SYS_REG(3, 0, 0, 6, 1),	/* ID_AA64ISAR1_EL1 */
-	ARM64_SYS_REG(3, 0, 0, 6, 2),
+	ARM64_SYS_REG(3, 0, 0, 6, 2),	/* ID_AA64ISAR2_EL1 */
 	ARM64_SYS_REG(3, 0, 0, 6, 3),
 	ARM64_SYS_REG(3, 0, 0, 6, 4),
 	ARM64_SYS_REG(3, 0, 0, 6, 5),
@@ -828,8 +880,8 @@ static __u64 base_regs[] = {
 	ARM64_SYS_REG(3, 0, 0, 7, 0),	/* ID_AA64MMFR0_EL1 */
 	ARM64_SYS_REG(3, 0, 0, 7, 1),	/* ID_AA64MMFR1_EL1 */
 	ARM64_SYS_REG(3, 0, 0, 7, 2),	/* ID_AA64MMFR2_EL1 */
-	ARM64_SYS_REG(3, 0, 0, 7, 3),
-	ARM64_SYS_REG(3, 0, 0, 7, 4),
+	ARM64_SYS_REG(3, 0, 0, 7, 3),	/* ID_AA64MMFR3_EL1 */
+	ARM64_SYS_REG(3, 0, 0, 7, 4),	/* ID_AA64MMFR4_EL1 */
 	ARM64_SYS_REG(3, 0, 0, 7, 5),
 	ARM64_SYS_REG(3, 0, 0, 7, 6),
 	ARM64_SYS_REG(3, 0, 0, 7, 7),
@@ -839,12 +891,15 @@ static __u64 base_regs[] = {
 	ARM64_SYS_REG(3, 0, 2, 0, 0),	/* TTBR0_EL1 */
 	ARM64_SYS_REG(3, 0, 2, 0, 1),	/* TTBR1_EL1 */
 	ARM64_SYS_REG(3, 0, 2, 0, 2),	/* TCR_EL1 */
+	ARM64_SYS_REG(3, 0, 2, 0, 3),	/* TCR2_EL1 */
 	ARM64_SYS_REG(3, 0, 5, 1, 0),	/* AFSR0_EL1 */
 	ARM64_SYS_REG(3, 0, 5, 1, 1),	/* AFSR1_EL1 */
 	ARM64_SYS_REG(3, 0, 5, 2, 0),	/* ESR_EL1 */
 	ARM64_SYS_REG(3, 0, 6, 0, 0),	/* FAR_EL1 */
 	ARM64_SYS_REG(3, 0, 7, 4, 0),	/* PAR_EL1 */
 	ARM64_SYS_REG(3, 0, 10, 2, 0),	/* MAIR_EL1 */
+	ARM64_SYS_REG(3, 0, 10, 2, 2),	/* PIRE0_EL1 */
+	ARM64_SYS_REG(3, 0, 10, 2, 3),	/* PIR_EL1 */
 	ARM64_SYS_REG(3, 0, 10, 3, 0),	/* AMAIR_EL1 */
 	ARM64_SYS_REG(3, 0, 12, 0, 0),	/* VBAR_EL1 */
 	ARM64_SYS_REG(3, 0, 12, 1, 1),	/* DISR_EL1 */
@@ -854,6 +909,9 @@ static __u64 base_regs[] = {
 	ARM64_SYS_REG(3, 2, 0, 0, 0),	/* CSSELR_EL1 */
 	ARM64_SYS_REG(3, 3, 13, 0, 2),	/* TPIDR_EL0 */
 	ARM64_SYS_REG(3, 3, 13, 0, 3),	/* TPIDRRO_EL0 */
+	ARM64_SYS_REG(3, 3, 14, 0, 1),	/* CNTPCT_EL0 */
+	ARM64_SYS_REG(3, 3, 14, 2, 1),	/* CNTP_CTL_EL0 */
+	ARM64_SYS_REG(3, 3, 14, 2, 2),	/* CNTP_CVAL_EL0 */
 	ARM64_SYS_REG(3, 4, 3, 0, 0),	/* DACR32_EL2 */
 	ARM64_SYS_REG(3, 4, 5, 0, 1),	/* IFSR32_EL2 */
 	ARM64_SYS_REG(3, 4, 5, 3, 0),	/* FPEXC32_EL2 */

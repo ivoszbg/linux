@@ -401,17 +401,22 @@ int tpm_pm_suspend(struct device *dev)
 	    !pm_suspend_via_firmware())
 		goto suspended;
 
-	if (!tpm_chip_start(chip)) {
+	rc = tpm_try_get_ops(chip);
+	if (!rc) {
 		if (chip->flags & TPM_CHIP_FLAG_TPM2)
 			tpm2_shutdown(chip, TPM2_SU_STATE);
 		else
 			rc = tpm1_pm_suspend(chip, tpm_suspend_pcr);
 
-		tpm_chip_stop(chip);
+		tpm_put_ops(chip);
 	}
 
 suspended:
-	return rc;
+	chip->flags |= TPM_CHIP_FLAG_SUSPENDED;
+
+	if (rc)
+		dev_err(dev, "Ignoring error %d while suspending\n", rc);
+	return 0;
 }
 EXPORT_SYMBOL_GPL(tpm_pm_suspend);
 
@@ -425,6 +430,14 @@ int tpm_pm_resume(struct device *dev)
 
 	if (chip == NULL)
 		return -ENODEV;
+
+	chip->flags &= ~TPM_CHIP_FLAG_SUSPENDED;
+
+	/*
+	 * Guarantee that SUSPENDED is written last, so that hwrng does not
+	 * activate before the chip has been fully resumed.
+	 */
+	wmb();
 
 	return 0;
 }
@@ -463,16 +476,15 @@ static int __init tpm_init(void)
 {
 	int rc;
 
-	tpm_class = class_create(THIS_MODULE, "tpm");
-	if (IS_ERR(tpm_class)) {
+	rc = class_register(&tpm_class);
+	if (rc) {
 		pr_err("couldn't create tpm class\n");
-		return PTR_ERR(tpm_class);
+		return rc;
 	}
 
-	tpmrm_class = class_create(THIS_MODULE, "tpmrm");
-	if (IS_ERR(tpmrm_class)) {
+	rc = class_register(&tpmrm_class);
+	if (rc) {
 		pr_err("couldn't create tpmrm class\n");
-		rc = PTR_ERR(tpmrm_class);
 		goto out_destroy_tpm_class;
 	}
 
@@ -493,9 +505,9 @@ static int __init tpm_init(void)
 out_unreg_chrdev:
 	unregister_chrdev_region(tpm_devt, 2 * TPM_NUM_DEVICES);
 out_destroy_tpmrm_class:
-	class_destroy(tpmrm_class);
+	class_unregister(&tpmrm_class);
 out_destroy_tpm_class:
-	class_destroy(tpm_class);
+	class_unregister(&tpm_class);
 
 	return rc;
 }
@@ -503,8 +515,8 @@ out_destroy_tpm_class:
 static void __exit tpm_exit(void)
 {
 	idr_destroy(&dev_nums_idr);
-	class_destroy(tpm_class);
-	class_destroy(tpmrm_class);
+	class_unregister(&tpm_class);
+	class_unregister(&tpmrm_class);
 	unregister_chrdev_region(tpm_devt, 2*TPM_NUM_DEVICES);
 	tpm_dev_common_exit();
 }

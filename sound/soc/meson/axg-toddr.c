@@ -122,6 +122,7 @@ static const struct snd_soc_dai_ops axg_toddr_ops = {
 	.hw_params	= axg_toddr_dai_hw_params,
 	.startup	= axg_toddr_dai_startup,
 	.shutdown	= axg_toddr_dai_shutdown,
+	.pcm_new	= axg_toddr_pcm_new,
 };
 
 static struct snd_soc_dai_driver axg_toddr_dai_drv = {
@@ -134,7 +135,6 @@ static struct snd_soc_dai_driver axg_toddr_dai_drv = {
 		.formats	= AXG_FIFO_FORMATS,
 	},
 	.ops		= &axg_toddr_ops,
-	.pcm_new	= axg_toddr_pcm_new,
 };
 
 static const char * const axg_toddr_sel_texts[] = {
@@ -182,6 +182,7 @@ static const struct snd_soc_component_driver axg_toddr_component_drv = {
 	.hw_free		= axg_fifo_pcm_hw_free,
 	.pointer		= axg_fifo_pcm_pointer,
 	.trigger		= axg_fifo_pcm_trigger,
+	.legacy_dai_naming	= 1,
 };
 
 static const struct axg_fifo_match_data axg_toddr_match_data = {
@@ -216,6 +217,7 @@ static const struct snd_soc_dai_ops g12a_toddr_ops = {
 	.hw_params	= axg_toddr_dai_hw_params,
 	.startup	= g12a_toddr_dai_startup,
 	.shutdown	= axg_toddr_dai_shutdown,
+	.pcm_new	= axg_toddr_pcm_new,
 };
 
 static struct snd_soc_dai_driver g12a_toddr_dai_drv = {
@@ -228,7 +230,6 @@ static struct snd_soc_dai_driver g12a_toddr_dai_drv = {
 		.formats	= AXG_FIFO_FORMATS,
 	},
 	.ops		= &g12a_toddr_ops,
-	.pcm_new	= axg_toddr_pcm_new,
 };
 
 static const struct snd_soc_component_driver g12a_toddr_component_drv = {
@@ -242,6 +243,7 @@ static const struct snd_soc_component_driver g12a_toddr_component_drv = {
 	.hw_free		= axg_fifo_pcm_hw_free,
 	.pointer		= axg_fifo_pcm_pointer,
 	.trigger		= axg_fifo_pcm_trigger,
+	.legacy_dai_naming	= 1,
 };
 
 static const struct axg_fifo_match_data g12a_toddr_match_data = {
@@ -312,6 +314,7 @@ static const struct snd_soc_component_driver sm1_toddr_component_drv = {
 	.hw_free		= axg_fifo_pcm_hw_free,
 	.pointer		= axg_fifo_pcm_pointer,
 	.trigger		= axg_fifo_pcm_trigger,
+	.legacy_dai_naming	= 1,
 };
 
 static const struct axg_fifo_match_data sm1_toddr_match_data = {

@@ -456,9 +456,9 @@ static int lm3692x_probe_dt(struct lm3692x_led *led)
 	return ret;
 }
 
-static int lm3692x_probe(struct i2c_client *client,
-			const struct i2c_device_id *id)
+static int lm3692x_probe(struct i2c_client *client)
 {
+	const struct i2c_device_id *id = i2c_client_get_device_id(client);
 	struct lm3692x_led *led;
 	int ret;
 
@@ -491,14 +491,12 @@ static int lm3692x_probe(struct i2c_client *client,
 	return 0;
 }
 
-static int lm3692x_remove(struct i2c_client *client)
+static void lm3692x_remove(struct i2c_client *client)
 {
 	struct lm3692x_led *led = i2c_get_clientdata(client);
 
 	lm3692x_leds_disable(led);
 	mutex_destroy(&led->lock);
-
-	return 0;
 }
 
 static const struct i2c_device_id lm3692x_id[] = {

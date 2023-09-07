@@ -329,22 +329,22 @@ static int emc1403_detect(struct i2c_client *client,
 	id = i2c_smbus_read_byte_data(client, THERMAL_PID_REG);
 	switch (id) {
 	case 0x20:
-		strlcpy(info->type, "emc1402", I2C_NAME_SIZE);
+		strscpy(info->type, "emc1402", I2C_NAME_SIZE);
 		break;
 	case 0x21:
-		strlcpy(info->type, "emc1403", I2C_NAME_SIZE);
+		strscpy(info->type, "emc1403", I2C_NAME_SIZE);
 		break;
 	case 0x22:
-		strlcpy(info->type, "emc1422", I2C_NAME_SIZE);
+		strscpy(info->type, "emc1422", I2C_NAME_SIZE);
 		break;
 	case 0x23:
-		strlcpy(info->type, "emc1423", I2C_NAME_SIZE);
+		strscpy(info->type, "emc1423", I2C_NAME_SIZE);
 		break;
 	case 0x25:
-		strlcpy(info->type, "emc1404", I2C_NAME_SIZE);
+		strscpy(info->type, "emc1404", I2C_NAME_SIZE);
 		break;
 	case 0x27:
-		strlcpy(info->type, "emc1424", I2C_NAME_SIZE);
+		strscpy(info->type, "emc1424", I2C_NAME_SIZE);
 		break;
 	default:
 		return -ENODEV;
@@ -454,7 +454,7 @@ static struct i2c_driver sensor_emc1403 = {
 		.name = "emc1403",
 	},
 	.detect = emc1403_detect,
-	.probe_new = emc1403_probe,
+	.probe = emc1403_probe,
 	.id_table = emc1403_idtable,
 	.address_list = emc1403_address_list,
 };

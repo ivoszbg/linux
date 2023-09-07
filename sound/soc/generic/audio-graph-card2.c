@@ -47,6 +47,18 @@
  see
 	graph_parse_daifmt().
 
+ "format" property is no longer needed on DT if both CPU/Codec drivers are
+ supporting snd_soc_dai_ops :: .auto_selectable_formats.
+ see
+	snd_soc_runtime_get_dai_fmt()
+
+	sample driver
+		linux/sound/soc/sh/rcar/core.c
+		linux/sound/soc/codecs/ak4613.c
+		linux/sound/soc/codecs/pcm3168a.c
+		linux/sound/soc/soc-utils.c
+		linux/sound/soc/generic/test-component.c
+
  ************************************
 	Normal Audio-Graph
  ************************************
@@ -90,12 +102,12 @@ links indicates connection part of CPU side (= A).
 			ports@0 {
 (X) (A)			mcpu:	port@0 { mcpu0_ep: endpoint { remote-endpoint = <&mcodec0_ep>; }; };
 (y)				port@1 { mcpu1_ep: endpoint { remote-endpoint = <&cpu1_ep>; }; };
-(y)				port@1 { mcpu2_ep: endpoint { remote-endpoint = <&cpu2_ep>; }; };
+(y)				port@2 { mcpu2_ep: endpoint { remote-endpoint = <&cpu2_ep>; }; };
 			};
 			ports@1 {
 (X)				port@0 { mcodec0_ep: endpoint { remote-endpoint = <&mcpu0_ep>; }; };
-(y)				port@0 { mcodec1_ep: endpoint { remote-endpoint = <&codec1_ep>; }; };
-(y)				port@1 { mcodec2_ep: endpoint { remote-endpoint = <&codec2_ep>; }; };
+(y)				port@1 { mcodec1_ep: endpoint { remote-endpoint = <&codec1_ep>; }; };
+(y)				port@2 { mcodec2_ep: endpoint { remote-endpoint = <&codec2_ep>; }; };
 			};
 		};
 	};
@@ -229,7 +241,8 @@ enum graph_type {
 
 static enum graph_type __graph_get_type(struct device_node *lnk)
 {
-	struct device_node *np;
+	struct device_node *np, *parent_np;
+	enum graph_type ret;
 
 	/*
 	 * target {
@@ -240,19 +253,33 @@ static enum graph_type __graph_get_type(struct device_node *lnk)
 	 * };
 	 */
 	np = of_get_parent(lnk);
-	if (of_node_name_eq(np, "ports"))
-		np = of_get_parent(np);
+	if (of_node_name_eq(np, "ports")) {
+		parent_np = of_get_parent(np);
+		of_node_put(np);
+		np = parent_np;
+	}
 
-	if (of_node_name_eq(np, GRAPH_NODENAME_MULTI))
-		return GRAPH_MULTI;
+	if (of_node_name_eq(np, GRAPH_NODENAME_MULTI)) {
+		ret = GRAPH_MULTI;
+		goto out_put;
+	}
 
-	if (of_node_name_eq(np, GRAPH_NODENAME_DPCM))
-		return GRAPH_DPCM;
+	if (of_node_name_eq(np, GRAPH_NODENAME_DPCM)) {
+		ret = GRAPH_DPCM;
+		goto out_put;
+	}
 
-	if (of_node_name_eq(np, GRAPH_NODENAME_C2C))
-		return GRAPH_C2C;
+	if (of_node_name_eq(np, GRAPH_NODENAME_C2C)) {
+		ret = GRAPH_C2C;
+		goto out_put;
+	}
 
-	return GRAPH_NORMAL;
+	ret = GRAPH_NORMAL;
+
+out_put:
+	of_node_put(np);
+	return ret;
+
 }
 
 static enum graph_type graph_get_type(struct asoc_simple_priv *priv,
@@ -338,109 +365,6 @@ static const struct snd_soc_ops graph_ops = {
 	.hw_params	= asoc_simple_hw_params,
 };
 
-static int graph_get_dai_id(struct device_node *ep)
-{
-	struct device_node *node;
-	struct device_node *endpoint;
-	struct of_endpoint info;
-	int i, id;
-	const u32 *reg;
-	int ret;
-
-	/* use driver specified DAI ID if exist */
-	ret = snd_soc_get_dai_id(ep);
-	if (ret != -ENOTSUPP)
-		return ret;
-
-	/* use endpoint/port reg if exist */
-	ret = of_graph_parse_endpoint(ep, &info);
-	if (ret == 0) {
-		/*
-		 * Because it will count port/endpoint if it doesn't have "reg".
-		 * But, we can't judge whether it has "no reg", or "reg = <0>"
-		 * only of_graph_parse_endpoint().
-		 * We need to check "reg" property
-		 */
-		if (of_get_property(ep,   "reg", NULL))
-			return info.id;
-
-		node = of_get_parent(ep);
-		reg = of_get_property(node, "reg", NULL);
-		of_node_put(node);
-		if (reg)
-			return info.port;
-	}
-	node = of_graph_get_port_parent(ep);
-
-	/*
-	 * Non HDMI sound case, counting port/endpoint on its DT
-	 * is enough. Let's count it.
-	 */
-	i = 0;
-	id = -1;
-	for_each_endpoint_of_node(node, endpoint) {
-		if (endpoint == ep)
-			id = i;
-		i++;
-	}
-
-	of_node_put(node);
-
-	if (id < 0)
-		return -ENODEV;
-
-	return id;
-}
-
-static int asoc_simple_parse_dai(struct device_node *ep,
-				 struct snd_soc_dai_link_component *dlc,
-				 int *is_single_link)
-{
-	struct device_node *node;
-	struct of_phandle_args args;
-	int ret;
-
-	if (!ep)
-		return 0;
-
-	node = of_graph_get_port_parent(ep);
-
-	/* Get dai->name */
-	args.np		= node;
-	args.args[0]	= graph_get_dai_id(ep);
-	args.args_count	= (of_graph_get_endpoint_count(node) > 1);
-
-	/*
-	 * FIXME
-	 *
-	 * Here, dlc->dai_name is pointer to CPU/Codec DAI name.
-	 * If user unbinded CPU or Codec driver, but not for Sound Card,
-	 * dlc->dai_name is keeping unbinded CPU or Codec
-	 * driver's pointer.
-	 *
-	 * If user re-bind CPU or Codec driver again, ALSA SoC will try
-	 * to rebind Card via snd_soc_try_rebind_card(), but because of
-	 * above reason, it might can't bind Sound Card.
-	 * Because Sound Card is pointing to released dai_name pointer.
-	 *
-	 * To avoid this rebind Card issue,
-	 * 1) It needs to alloc memory to keep dai_name eventhough
-	 *    CPU or Codec driver was unbinded, or
-	 * 2) user need to rebind Sound Card everytime
-	 *    if he unbinded CPU or Codec.
-	 */
-	ret = snd_soc_get_dai_name(&args, &dlc->dai_name);
-	if (ret < 0)
-		return ret;
-
-	dlc->of_node = node;
-
-	if (is_single_link)
-		*is_single_link = of_graph_get_endpoint_count(node) == 1;
-
-	return 0;
-}
-
 static void graph_parse_convert(struct device_node *ep,
 				struct simple_dai_props *props)
 {
@@ -495,7 +419,7 @@ static int __graph_parse_node(struct asoc_simple_priv *priv,
 
 	graph_parse_mclk_fs(ep, dai_props);
 
-	ret = asoc_simple_parse_dai(ep, dlc, &is_single_links);
+	ret = asoc_graph_parse_dai(dev, ep, dlc, &is_single_links);
 	if (ret < 0)
 		return ret;
 
@@ -832,7 +756,8 @@ int audio_graph2_link_dpcm(struct asoc_simple_priv *priv,
 			goto err;
 	}
 
-	graph_parse_convert(rep, dai_props);
+	graph_parse_convert(ep,  dai_props); /* at node of <dpcm> */
+	graph_parse_convert(rep, dai_props); /* at node of <CPU/Codec> */
 
 	snd_soc_dai_link_set_capabilities(dai_link);
 
@@ -851,12 +776,10 @@ int audio_graph2_link_c2c(struct asoc_simple_priv *priv,
 			  struct link_info *li)
 {
 	struct snd_soc_dai_link *dai_link = simple_priv_to_link(priv, li->link);
-	struct simple_dai_props *dai_props = simple_priv_to_props(priv, li->link);
-	struct snd_soc_pcm_stream *c2c_conf = dai_props->c2c_conf;
 	struct device_node *port0, *port1, *ports;
 	struct device_node *codec0_port, *codec1_port;
 	struct device_node *ep0, *ep1;
-	u32 val;
+	u32 val = 0;
 	int ret = -EINVAL;
 
 	/*
@@ -880,19 +803,33 @@ int audio_graph2_link_c2c(struct asoc_simple_priv *priv,
 	ports = of_get_parent(port0);
 	port1 = of_get_next_child(ports, lnk);
 
-	if (!of_get_property(ports, "rate", &val)) {
+	/*
+	 * Card2 can use original Codec2Codec settings if DT has.
+	 * It will use default settings if no settings on DT.
+	 * see
+	 *	asoc_simple_init_for_codec2codec()
+	 *
+	 * Add more settings here if needed
+	 */
+	of_property_read_u32(ports, "rate", &val);
+	if (val) {
 		struct device *dev = simple_priv_to_dev(priv);
+		struct snd_soc_pcm_stream *c2c_conf;
 
-		dev_err(dev, "Codec2Codec needs rate settings\n");
-		goto err1;
+		c2c_conf = devm_kzalloc(dev, sizeof(*c2c_conf), GFP_KERNEL);
+		if (!c2c_conf)
+			goto err1;
+
+		c2c_conf->formats	= SNDRV_PCM_FMTBIT_S32_LE; /* update ME */
+		c2c_conf->rates		= SNDRV_PCM_RATE_8000_384000;
+		c2c_conf->rate_min	=
+		c2c_conf->rate_max	= val;
+		c2c_conf->channels_min	=
+		c2c_conf->channels_max	= 2; /* update ME */
+
+		dai_link->c2c_params		= c2c_conf;
+		dai_link->num_c2c_params	= 1;
 	}
-
-	c2c_conf->formats	= SNDRV_PCM_FMTBIT_S32_LE; /* update ME */
-	c2c_conf->rate_min	=
-	c2c_conf->rate_max	= val;
-	c2c_conf->channels_min	=
-	c2c_conf->channels_max	= 2; /* update ME */
-	dai_link->params	= c2c_conf;
 
 	ep0 = port_to_endpoint(port0);
 	ep1 = port_to_endpoint(port1);
@@ -1016,8 +953,14 @@ static int graph_count_normal(struct asoc_simple_priv *priv,
 	 * =>		lnk: port { endpoint { .. }; };
 	 *	};
 	 */
+	/*
+	 * DON'T REMOVE platforms
+	 * see
+	 *	simple-card.c :: simple_count_noml()
+	 */
 	li->num[li->link].cpus		=
 	li->num[li->link].platforms	= graph_counter(cpu_port);
+
 	li->num[li->link].codecs	= graph_counter(codec_port);
 
 	of_node_put(cpu_ep);
@@ -1049,6 +992,11 @@ static int graph_count_dpcm(struct asoc_simple_priv *priv,
 	 */
 
 	if (asoc_graph_is_ports0(lnk)) {
+		/*
+		 * DON'T REMOVE platforms
+		 * see
+		 *	simple-card.c :: simple_count_noml()
+		 */
 		li->num[li->link].cpus		= graph_counter(rport); /* FE */
 		li->num[li->link].platforms	= graph_counter(rport);
 	} else {
@@ -1083,10 +1031,15 @@ static int graph_count_c2c(struct asoc_simple_priv *priv,
 	 *	};
 	 * };
 	 */
+	/*
+	 * DON'T REMOVE platforms
+	 * see
+	 *	simple-card.c :: simple_count_noml()
+	 */
 	li->num[li->link].cpus		=
 	li->num[li->link].platforms	= graph_counter(codec0);
+
 	li->num[li->link].codecs	= graph_counter(codec1);
-	li->num[li->link].c2c		= 1;
 
 	of_node_put(ports);
 	of_node_put(port1);
@@ -1242,9 +1195,6 @@ err:
 
 	if (ret < 0)
 		dev_err_probe(dev, ret, "parse error\n");
-
-	if (ret == 0)
-		dev_warn(dev, "Audio Graph Card2 is still under Experimental stage\n");
 
 	return ret;
 }

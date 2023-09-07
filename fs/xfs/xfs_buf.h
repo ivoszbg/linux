@@ -15,6 +15,8 @@
 #include <linux/uio.h>
 #include <linux/list_lru.h>
 
+extern struct kmem_cache *xfs_buf_cache;
+
 /*
  *	Base types
  */
@@ -42,8 +44,15 @@ struct xfs_buf;
 #define _XBF_DELWRI_Q	 (1u << 22)/* buffer on a delwri queue */
 
 /* flags used only as arguments to access routines */
+/*
+ * Online fsck is scanning the buffer cache for live buffers.  Do not warn
+ * about length mismatches during lookups and do not return stale buffers.
+ */
+#define XBF_LIVESCAN	 (1u << 28)
+#define XBF_INCORE	 (1u << 29)/* lookup only, return if found in cache */
 #define XBF_TRYLOCK	 (1u << 30)/* lock requested, but do not wait */
 #define XBF_UNMAPPED	 (1u << 31)/* do not map the buffer */
+
 
 typedef unsigned int xfs_buf_flags_t;
 
@@ -63,6 +72,8 @@ typedef unsigned int xfs_buf_flags_t;
 	{ _XBF_KMEM,		"KMEM" }, \
 	{ _XBF_DELWRI_Q,	"DELWRI_Q" }, \
 	/* The following interface flags should never be set */ \
+	{ XBF_LIVESCAN,		"LIVESCAN" }, \
+	{ XBF_INCORE,		"INCORE" }, \
 	{ XBF_TRYLOCK,		"TRYLOCK" }, \
 	{ XBF_UNMAPPED,		"UNMAPPED" }
 
@@ -109,7 +120,14 @@ typedef struct xfs_buftarg {
 struct xfs_buf_map {
 	xfs_daddr_t		bm_bn;	/* block number for I/O */
 	int			bm_len;	/* size of I/O */
+	unsigned int		bm_flags;
 };
+
+/*
+ * Online fsck is scanning the buffer cache for live buffers.  Do not warn
+ * about length mismatches during lookups and do not return stale buffers.
+ */
+#define XBM_LIVESCAN		(1U << 0)
 
 #define DEFINE_SINGLE_BUF_MAP(map, blkno, numblk) \
 	struct xfs_buf_map (map) = { .bm_bn = (blkno), .bm_len = (numblk) };
@@ -193,13 +211,10 @@ struct xfs_buf {
 	int			b_last_error;
 
 	const struct xfs_buf_ops	*b_ops;
+	struct rcu_head		b_rcu;
 };
 
 /* Finding and Reading Buffers */
-struct xfs_buf *xfs_buf_incore(struct xfs_buftarg *target,
-			   xfs_daddr_t blkno, size_t numblks,
-			   xfs_buf_flags_t flags);
-
 int xfs_buf_get_map(struct xfs_buftarg *target, struct xfs_buf_map *map,
 		int nmaps, xfs_buf_flags_t flags, struct xfs_buf **bpp);
 int xfs_buf_read_map(struct xfs_buftarg *target, struct xfs_buf_map *map,
@@ -208,6 +223,19 @@ int xfs_buf_read_map(struct xfs_buftarg *target, struct xfs_buf_map *map,
 void xfs_buf_readahead_map(struct xfs_buftarg *target,
 			       struct xfs_buf_map *map, int nmaps,
 			       const struct xfs_buf_ops *ops);
+
+static inline int
+xfs_buf_incore(
+	struct xfs_buftarg	*target,
+	xfs_daddr_t		blkno,
+	size_t			numblks,
+	xfs_buf_flags_t		flags,
+	struct xfs_buf		**bpp)
+{
+	DEFINE_SINGLE_BUF_MAP(map, blkno, numblks);
+
+	return xfs_buf_get_map(target, &map, 1, XBF_INCORE | flags, bpp);
+}
 
 static inline int
 xfs_buf_get(
@@ -293,10 +321,6 @@ extern bool xfs_buf_delwri_queue(struct xfs_buf *, struct list_head *);
 extern int xfs_buf_delwri_submit(struct list_head *);
 extern int xfs_buf_delwri_submit_nowait(struct list_head *);
 extern int xfs_buf_delwri_pushbuf(struct xfs_buf *, struct list_head *);
-
-/* Buffer Daemon Setup Routines */
-extern int xfs_buf_init(void);
-extern void xfs_buf_terminate(void);
 
 static inline xfs_daddr_t xfs_buf_daddr(struct xfs_buf *bp)
 {

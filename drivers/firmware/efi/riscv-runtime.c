@@ -41,7 +41,7 @@ static bool __init efi_virtmap_init(void)
 
 		if (!(md->attribute & EFI_MEMORY_RUNTIME))
 			continue;
-		if (md->virt_addr == 0)
+		if (md->virt_addr == U64_MAX)
 			return false;
 
 		ret = efi_create_mapping(&efi_mm, md);
@@ -130,14 +130,25 @@ static int __init riscv_enable_runtime_services(void)
 }
 early_initcall(riscv_enable_runtime_services);
 
-void efi_virtmap_load(void)
+static void efi_virtmap_load(void)
 {
 	preempt_disable();
 	switch_mm(current->active_mm, &efi_mm, NULL);
 }
 
-void efi_virtmap_unload(void)
+static void efi_virtmap_unload(void)
 {
 	switch_mm(&efi_mm, current->active_mm, NULL);
 	preempt_enable();
+}
+
+void arch_efi_call_virt_setup(void)
+{
+	sync_kernel_mappings(efi_mm.pgd);
+	efi_virtmap_load();
+}
+
+void arch_efi_call_virt_teardown(void)
+{
+	efi_virtmap_unload();
 }

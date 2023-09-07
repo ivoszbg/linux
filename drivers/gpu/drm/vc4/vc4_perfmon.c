@@ -17,13 +17,16 @@
 
 void vc4_perfmon_get(struct vc4_perfmon *perfmon)
 {
-	struct vc4_dev *vc4 = perfmon->dev;
+	struct vc4_dev *vc4;
 
+	if (!perfmon)
+		return;
+
+	vc4 = perfmon->dev;
 	if (WARN_ON_ONCE(vc4->is_vc5))
 		return;
 
-	if (perfmon)
-		refcount_inc(&perfmon->refcnt);
+	refcount_inc(&perfmon->refcnt);
 }
 
 void vc4_perfmon_put(struct vc4_perfmon *perfmon)
@@ -130,6 +133,7 @@ void vc4_perfmon_close_file(struct vc4_file *vc4file)
 	idr_for_each(&vc4file->perfmon.idr, vc4_perfmon_idr_del, NULL);
 	idr_destroy(&vc4file->perfmon.idr);
 	mutex_unlock(&vc4file->perfmon.lock);
+	mutex_destroy(&vc4file->perfmon.lock);
 }
 
 int vc4_perfmon_create_ioctl(struct drm_device *dev, void *data,

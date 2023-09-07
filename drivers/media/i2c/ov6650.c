@@ -1025,8 +1025,7 @@ static const struct v4l2_subdev_internal_ops ov6650_internal_ops = {
 /*
  * i2c_driver function
  */
-static int ov6650_probe(struct i2c_client *client,
-			const struct i2c_device_id *did)
+static int ov6650_probe(struct i2c_client *client)
 {
 	struct ov6650 *priv;
 	int ret;
@@ -1096,13 +1095,12 @@ ectlhdlfree:
 	return ret;
 }
 
-static int ov6650_remove(struct i2c_client *client)
+static void ov6650_remove(struct i2c_client *client)
 {
 	struct ov6650 *priv = to_ov6650(client);
 
 	v4l2_async_unregister_subdev(&priv->subdev);
 	v4l2_ctrl_handler_free(&priv->hdl);
-	return 0;
 }
 
 static const struct i2c_device_id ov6650_id[] = {

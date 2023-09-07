@@ -10,7 +10,7 @@
 #include <linux/mfd/core.h>
 #include <linux/module.h>
 #include <linux/mod_devicetable.h>
-#include <linux/of_platform.h>
+#include <linux/of.h>
 #include <linux/platform_device.h>
 #include <linux/platform_data/cros_ec_chardev.h>
 #include <linux/platform_data/cros_ec_commands.h>
@@ -20,7 +20,6 @@
 #define DRV_NAME "cros-ec-dev"
 
 static struct class cros_class = {
-	.owner          = THIS_MODULE,
 	.name           = "chromeos",
 };
 
@@ -250,8 +249,8 @@ static int ec_device_probe(struct platform_device *pdev)
 	 * The PCHG device cannot be detected by sending EC_FEATURE_GET_CMD, but
 	 * it can be detected by querying the number of peripheral chargers.
 	 */
-	retval = cros_ec_command(ec->ec_dev, 0, EC_CMD_PCHG_COUNT, NULL, 0,
-				 &pchg_count, sizeof(pchg_count));
+	retval = cros_ec_cmd(ec->ec_dev, 0, EC_CMD_PCHG_COUNT, NULL, 0,
+			     &pchg_count, sizeof(pchg_count));
 	if (retval >= 0 && pchg_count.port_count) {
 		retval = mfd_add_hotplug_devices(ec->dev,
 					cros_ec_pchg_cells,

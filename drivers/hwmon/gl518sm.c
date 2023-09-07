@@ -586,7 +586,7 @@ static int gl518_detect(struct i2c_client *client, struct i2c_board_info *info)
 	if (rev != 0x00 && rev != 0x80)
 		return -ENODEV;
 
-	strlcpy(info->type, "gl518sm", I2C_NAME_SIZE);
+	strscpy(info->type, "gl518sm", I2C_NAME_SIZE);
 
 	return 0;
 }
@@ -652,7 +652,7 @@ static struct i2c_driver gl518_driver = {
 	.driver = {
 		.name	= "gl518sm",
 	},
-	.probe_new	= gl518_probe,
+	.probe		= gl518_probe,
 	.id_table	= gl518_id,
 	.detect		= gl518_detect,
 	.address_list	= normal_i2c,

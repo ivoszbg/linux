@@ -667,7 +667,9 @@ static int catpt_dai_pcm_new(struct snd_soc_pcm_runtime *rtm,
 	if (!memcmp(&cdev->devfmt[devfmt.iface], &devfmt, sizeof(devfmt)))
 		return 0;
 
-	pm_runtime_get_sync(cdev->dev);
+	ret = pm_runtime_resume_and_get(cdev->dev);
+	if (ret < 0 && ret != -EACCES)
+		return ret;
 
 	ret = catpt_ipc_set_device_format(cdev, &devfmt);
 
@@ -681,6 +683,10 @@ static int catpt_dai_pcm_new(struct snd_soc_pcm_runtime *rtm,
 	memcpy(&cdev->devfmt[devfmt.iface], &devfmt, sizeof(devfmt));
 	return 0;
 }
+
+static const struct snd_soc_dai_ops catpt_dai_ops = {
+	.pcm_new = catpt_dai_pcm_new,
+};
 
 static struct snd_soc_dai_driver dai_drivers[] = {
 /* FE DAIs */
@@ -762,7 +768,6 @@ static struct snd_soc_dai_driver dai_drivers[] = {
 {
 	.name = "ssp0-port",
 	.id = CATPT_SSP_IFACE_0,
-	.pcm_new = catpt_dai_pcm_new,
 	.playback = {
 		.channels_min = 1,
 		.channels_max = 8,
@@ -771,11 +776,11 @@ static struct snd_soc_dai_driver dai_drivers[] = {
 		.channels_min = 1,
 		.channels_max = 8,
 	},
+	.ops = &catpt_dai_ops,
 },
 {
 	.name = "ssp1-port",
 	.id = CATPT_SSP_IFACE_1,
-	.pcm_new = catpt_dai_pcm_new,
 	.playback = {
 		.channels_min = 1,
 		.channels_max = 8,
@@ -784,6 +789,7 @@ static struct snd_soc_dai_driver dai_drivers[] = {
 		.channels_min = 1,
 		.channels_max = 8,
 	},
+	.ops = &catpt_dai_ops,
 },
 };
 
@@ -853,9 +859,12 @@ static int catpt_mixer_volume_get(struct snd_kcontrol *kcontrol,
 		snd_soc_kcontrol_component(kcontrol);
 	struct catpt_dev *cdev = dev_get_drvdata(component->dev);
 	u32 dspvol;
+	int ret;
 	int i;
 
-	pm_runtime_get_sync(cdev->dev);
+	ret = pm_runtime_resume_and_get(cdev->dev);
+	if (ret < 0 && ret != -EACCES)
+		return ret;
 
 	for (i = 0; i < CATPT_CHANNELS_MAX; i++) {
 		dspvol = catpt_mixer_volume(cdev, &cdev->mixer, i);
@@ -876,7 +885,9 @@ static int catpt_mixer_volume_put(struct snd_kcontrol *kcontrol,
 	struct catpt_dev *cdev = dev_get_drvdata(component->dev);
 	int ret;
 
-	pm_runtime_get_sync(cdev->dev);
+	ret = pm_runtime_resume_and_get(cdev->dev);
+	if (ret < 0 && ret != -EACCES)
+		return ret;
 
 	ret = catpt_set_dspvol(cdev, cdev->mixer.mixer_hw_id,
 			       ucontrol->value.integer.value);
@@ -897,6 +908,7 @@ static int catpt_stream_volume_get(struct snd_kcontrol *kcontrol,
 	struct catpt_dev *cdev = dev_get_drvdata(component->dev);
 	long *ctlvol = (long *)kcontrol->private_value;
 	u32 dspvol;
+	int ret;
 	int i;
 
 	stream = catpt_stream_find(cdev, pin_id);
@@ -906,7 +918,9 @@ static int catpt_stream_volume_get(struct snd_kcontrol *kcontrol,
 		return 0;
 	}
 
-	pm_runtime_get_sync(cdev->dev);
+	ret = pm_runtime_resume_and_get(cdev->dev);
+	if (ret < 0 && ret != -EACCES)
+		return ret;
 
 	for (i = 0; i < CATPT_CHANNELS_MAX; i++) {
 		dspvol = catpt_stream_volume(cdev, stream, i);
@@ -937,7 +951,9 @@ static int catpt_stream_volume_put(struct snd_kcontrol *kcontrol,
 		return 0;
 	}
 
-	pm_runtime_get_sync(cdev->dev);
+	ret = pm_runtime_resume_and_get(cdev->dev);
+	if (ret < 0 && ret != -EACCES)
+		return ret;
 
 	ret = catpt_set_dspvol(cdev, stream->info.stream_hw_id,
 			       ucontrol->value.integer.value);
@@ -1013,7 +1029,9 @@ static int catpt_loopback_switch_put(struct snd_kcontrol *kcontrol,
 		return 0;
 	}
 
-	pm_runtime_get_sync(cdev->dev);
+	ret = pm_runtime_resume_and_get(cdev->dev);
+	if (ret < 0 && ret != -EACCES)
+		return ret;
 
 	ret = catpt_ipc_mute_loopback(cdev, stream->info.stream_hw_id, mute);
 

@@ -89,7 +89,7 @@ void get_monotonic_and_raw(struct timespec *mon, struct timespec *raw)
 	}
 }
 
-int main(int argv, char **argc)
+int main(int argc, char **argv)
 {
 	struct timespec mon, raw, start, end;
 	long long delta1, delta2, interval, eppm, ppm;
@@ -129,8 +129,7 @@ int main(int argv, char **argc)
 	printf("%lld.%i(est)", eppm/1000, abs((int)(eppm%1000)));
 
 	/* Avg the two actual freq samples adjtimex gave us */
-	ppm = (tx1.freq + tx2.freq) * 1000 / 2;
-	ppm = (long long)tx1.freq * 1000;
+	ppm = (long long)(tx1.freq + tx2.freq) * 1000 / 2;
 	ppm = shift_right(ppm, 16);
 	printf(" %lld.%i(act)", ppm/1000, abs((int)(ppm%1000)));
 

@@ -36,9 +36,9 @@
 #define HVC_RESET_VECTORS 2
 
 /*
- * HVC_VHE_RESTART - Upgrade the CPU from EL1 to EL2, if possible
+ * HVC_FINALISE_EL2 - Upgrade the CPU from EL1 to EL2, if possible
  */
-#define HVC_VHE_RESTART	3
+#define HVC_FINALISE_EL2	3
 
 /* Max number of HYP stub hypercalls */
 #define HVC_STUB_HCALL_NR 4
@@ -48,6 +48,13 @@
 
 #define BOOT_CPU_MODE_EL1	(0xe11)
 #define BOOT_CPU_MODE_EL2	(0xe12)
+
+/*
+ * Flags returned together with the boot mode, but not preserved in
+ * __boot_cpu_mode. Used by the idreg override code to work out the
+ * boot state.
+ */
+#define BOOT_CPU_FLAG_E2H	BIT_ULL(32)
 
 #ifndef __ASSEMBLY__
 
@@ -71,6 +78,7 @@ extern u32 __boot_cpu_mode[2];
 
 void __hyp_set_vectors(phys_addr_t phys_vector_base);
 void __hyp_reset_vectors(void);
+bool is_kvm_arm_initialised(void);
 
 DECLARE_STATIC_KEY_FALSE(kvm_protected_mode_initialized);
 
@@ -103,8 +111,10 @@ static inline bool is_hyp_mode_mismatched(void)
 	return __boot_cpu_mode[0] != __boot_cpu_mode[1];
 }
 
-static inline bool is_kernel_in_hyp_mode(void)
+static __always_inline bool is_kernel_in_hyp_mode(void)
 {
+	BUILD_BUG_ON(__is_defined(__KVM_NVHE_HYPERVISOR__) ||
+		     __is_defined(__KVM_VHE_HYPERVISOR__));
 	return read_sysreg(CurrentEL) == CurrentEL_EL2;
 }
 
@@ -131,6 +141,14 @@ static __always_inline bool is_protected_kvm_enabled(void)
 		return false;
 	else
 		return cpus_have_final_cap(ARM64_KVM_PROTECTED_MODE);
+}
+
+static __always_inline bool has_hvhe(void)
+{
+	if (is_vhe_hyp_code())
+		return false;
+
+	return cpus_have_final_cap(ARM64_KVM_HVHE);
 }
 
 static inline bool is_hyp_nvhe(void)

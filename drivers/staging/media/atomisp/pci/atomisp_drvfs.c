@@ -45,10 +45,8 @@ struct _iunit_debug {
 
 #define OPTION_BIN_LIST			BIT(0)
 #define OPTION_BIN_RUN			BIT(1)
-#define OPTION_MEM_STAT			BIT(2)
 #define OPTION_VALID			(OPTION_BIN_LIST \
-					| OPTION_BIN_RUN \
-					| OPTION_MEM_STAT)
+					| OPTION_BIN_RUN)
 
 static struct _iunit_debug iunit_debug = {
 	.dbglvl = 0,
@@ -71,7 +69,7 @@ static inline int iunit_dump_dbgopt(struct atomisp_device *isp,
 		}
 
 		if (opt & OPTION_BIN_RUN) {
-			if (atomisp_streaming_count(isp)) {
+			if (isp->asd.streaming) {
 				atomisp_css_dump_sp_raw_copy_linecount(true);
 				atomisp_css_debug_dump_isp_binary();
 			} else {
@@ -81,9 +79,6 @@ static inline int iunit_dump_dbgopt(struct atomisp_device *isp,
 				goto opt_err;
 			}
 		}
-
-		if (opt & OPTION_MEM_STAT)
-			hmm_show_mem_stat(__func__, __LINE__);
 	} else {
 		ret = -EINVAL;
 		dev_err(isp->dev, "%s dump nothing[ret=%d]\n", __func__, ret);

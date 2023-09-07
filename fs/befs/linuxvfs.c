@@ -108,8 +108,7 @@ static const struct export_operations befs_export_operations = {
  * passes it the address of befs_get_block, for mapping file
  * positions to disk blocks.
  */
-static int
-befs_read_folio(struct file *file, struct folio *folio)
+static int befs_read_folio(struct file *file, struct folio *folio)
 {
 	return block_read_full_folio(folio, befs_get_block);
 }
@@ -364,7 +363,7 @@ static struct inode *befs_iget(struct super_block *sb, unsigned long ino)
 	inode->i_mtime.tv_sec =
 	    fs64_to_cpu(sb, raw_inode->last_modified_time) >> 16;
 	inode->i_mtime.tv_nsec = 0;   /* lower 16 bits are not a time */
-	inode->i_ctime = inode->i_mtime;
+	inode_set_ctime_to_ts(inode, inode->i_mtime);
 	inode->i_atime = inode->i_mtime;
 
 	befs_ino->i_inode_num = fsrun_to_cpu(sb, raw_inode->inode_num);
@@ -375,7 +374,7 @@ static struct inode *befs_iget(struct super_block *sb, unsigned long ino)
 	if (S_ISLNK(inode->i_mode) && !(befs_ino->i_flags & BEFS_LONG_SYMLINK)){
 		inode->i_size = 0;
 		inode->i_blocks = befs_sb->block_size / VFS_BLOCK_SIZE;
-		strlcpy(befs_ino->i_data.symlink, raw_inode->data.symlink,
+		strscpy(befs_ino->i_data.symlink, raw_inode->data.symlink,
 			BEFS_SYMLINK_LEN);
 	} else {
 		int num_blks;
@@ -470,13 +469,12 @@ befs_destroy_inodecache(void)
  */
 static int befs_symlink_read_folio(struct file *unused, struct folio *folio)
 {
-	struct page *page = &folio->page;
-	struct inode *inode = page->mapping->host;
+	struct inode *inode = folio->mapping->host;
 	struct super_block *sb = inode->i_sb;
 	struct befs_inode_info *befs_ino = BEFS_I(inode);
 	befs_data_stream *data = &befs_ino->i_data.ds;
 	befs_off_t len = data->size;
-	char *link = page_address(page);
+	char *link = folio_address(folio);
 
 	if (len == 0 || len > PAGE_SIZE) {
 		befs_error(sb, "Long symlink with illegal length");
@@ -489,12 +487,12 @@ static int befs_symlink_read_folio(struct file *unused, struct folio *folio)
 		goto fail;
 	}
 	link[len - 1] = '\0';
-	SetPageUptodate(page);
-	unlock_page(page);
+	folio_mark_uptodate(folio);
+	folio_unlock(folio);
 	return 0;
 fail:
-	SetPageError(page);
-	unlock_page(page);
+	folio_set_error(folio);
+	folio_unlock(folio);
 	return -EIO;
 }
 

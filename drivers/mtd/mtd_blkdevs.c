@@ -29,7 +29,7 @@ static void blktrans_dev_release(struct kref *kref)
 	struct mtd_blktrans_dev *dev =
 		container_of(kref, struct mtd_blktrans_dev, ref);
 
-	blk_cleanup_disk(dev->disk);
+	put_disk(dev->disk);
 	blk_mq_free_tag_set(dev->tag_set);
 	kfree(dev->tag_set);
 	list_del(&dev->list);
@@ -182,9 +182,9 @@ static blk_status_t mtd_queue_rq(struct blk_mq_hw_ctx *hctx,
 	return BLK_STS_OK;
 }
 
-static int blktrans_open(struct block_device *bdev, fmode_t mode)
+static int blktrans_open(struct gendisk *disk, blk_mode_t mode)
 {
-	struct mtd_blktrans_dev *dev = bdev->bd_disk->private_data;
+	struct mtd_blktrans_dev *dev = disk->private_data;
 	int ret = 0;
 
 	kref_get(&dev->ref);
@@ -208,7 +208,7 @@ static int blktrans_open(struct block_device *bdev, fmode_t mode)
 	ret = __get_mtd_device(dev->mtd);
 	if (ret)
 		goto error_release;
-	dev->file_mode = mode;
+	dev->writable = mode & BLK_OPEN_WRITE;
 
 unlock:
 	dev->open++;
@@ -225,7 +225,7 @@ error_put:
 	return ret;
 }
 
-static void blktrans_release(struct gendisk *disk, fmode_t mode)
+static void blktrans_release(struct gendisk *disk)
 {
 	struct mtd_blktrans_dev *dev = disk->private_data;
 
@@ -398,7 +398,7 @@ int add_mtd_blktrans_dev(struct mtd_blktrans_dev *new)
 	return 0;
 
 out_cleanup_disk:
-	blk_cleanup_disk(new->disk);
+	put_disk(new->disk);
 out_free_tag_set:
 	blk_mq_free_tag_set(new->tag_set);
 out_kfree_tag_set:

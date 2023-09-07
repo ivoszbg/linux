@@ -16,7 +16,6 @@
 #include <linux/i2c.h>
 #include <linux/interrupt.h>
 #include <linux/delay.h>
-#include <linux/of_device.h>
 #include <linux/of.h>
 #include <linux/bitops.h>
 #include <linux/regulator/consumer.h>
@@ -921,9 +920,9 @@ static const struct iio_trigger_ops bma180_trigger_ops = {
 	.reenable = bma180_trig_reen,
 };
 
-static int bma180_probe(struct i2c_client *client,
-		const struct i2c_device_id *id)
+static int bma180_probe(struct i2c_client *client)
 {
+	const struct i2c_device_id *id = i2c_client_get_device_id(client);
 	struct device *dev = &client->dev;
 	struct bma180_data *data;
 	struct iio_dev *indio_dev;
@@ -1006,11 +1005,12 @@ static int bma180_probe(struct i2c_client *client,
 
 		data->trig->ops = &bma180_trigger_ops;
 		iio_trigger_set_drvdata(data->trig, indio_dev);
-		indio_dev->trig = iio_trigger_get(data->trig);
 
 		ret = iio_trigger_register(data->trig);
 		if (ret)
 			goto err_trigger_free;
+
+		indio_dev->trig = iio_trigger_get(data->trig);
 	}
 
 	ret = iio_triggered_buffer_setup(indio_dev, NULL,
@@ -1044,7 +1044,7 @@ err_disable_vdd:
 	return ret;
 }
 
-static int bma180_remove(struct i2c_client *client)
+static void bma180_remove(struct i2c_client *client)
 {
 	struct iio_dev *indio_dev = i2c_get_clientdata(client);
 	struct bma180_data *data = iio_priv(indio_dev);
@@ -1061,8 +1061,6 @@ static int bma180_remove(struct i2c_client *client)
 	mutex_unlock(&data->mutex);
 	regulator_disable(data->vddio_supply);
 	regulator_disable(data->vdd_supply);
-
-	return 0;
 }
 
 static int bma180_suspend(struct device *dev)

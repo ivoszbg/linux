@@ -8,6 +8,7 @@ config VIDEO_IPU3_CIO2
 	select VIDEO_V4L2_SUBDEV_API
 	select V4L2_FWNODE
 	select VIDEOBUF2_DMA_SG
+	select IPU_BRIDGE if CIO2_BRIDGE
 
 	help
 	  This is the Intel IPU3 CIO2 CSI-2 receiver unit, found in Intel
@@ -21,6 +22,7 @@ config VIDEO_IPU3_CIO2
 config CIO2_BRIDGE
 	bool "IPU3 CIO2 Sensors Bridge"
 	depends on VIDEO_IPU3_CIO2 && ACPI
+	depends on I2C
 	help
 	  This extension provides an API for the ipu3-cio2 driver to create
 	  connections to cameras that are hidden in the SSDB buffer in ACPI.

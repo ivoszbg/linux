@@ -796,8 +796,8 @@ static void mips_ejtag_fdc_tty_hangup(struct tty_struct *tty)
 	tty_port_hangup(tty->port);
 }
 
-static int mips_ejtag_fdc_tty_write(struct tty_struct *tty,
-				    const unsigned char *buf, int total)
+static ssize_t mips_ejtag_fdc_tty_write(struct tty_struct *tty, const u8 *buf,
+					size_t total)
 {
 	int count, block;
 	struct mips_ejtag_fdc_tty_port *dport = tty->driver_data;
@@ -816,7 +816,7 @@ static int mips_ejtag_fdc_tty_write(struct tty_struct *tty,
 	 */
 	spin_lock(&dport->xmit_lock);
 	/* Work out how many bytes we can write to the xmit buffer */
-	total = min(total, (int)(priv->xmit_size - dport->xmit_cnt));
+	total = min_t(size_t, total, priv->xmit_size - dport->xmit_cnt);
 	atomic_add(total, &priv->xmit_total);
 	dport->xmit_cnt += total;
 	/* Write the actual bytes (may need splitting if it wraps) */
@@ -916,7 +916,7 @@ static int mips_ejtag_fdc_tty_probe(struct mips_cdmm_device *dev)
 	mips_ejtag_fdc_write(priv, REG_FDCFG, cfg);
 
 	/* Make each port's xmit FIFO big enough to fill FDC TX FIFO */
-	priv->xmit_size = min(tx_fifo * 4, (unsigned int)SERIAL_XMIT_SIZE);
+	priv->xmit_size = min(tx_fifo * 4, (unsigned int)UART_XMIT_SIZE);
 
 	driver = tty_alloc_driver(NUM_TTY_CHANNELS, TTY_DRIVER_REAL_RAW);
 	if (IS_ERR(driver))
@@ -1222,7 +1222,7 @@ static void kgdbfdc_push_one(void)
 
 	/* Construct a word from any data in buffer */
 	word = mips_ejtag_fdc_encode(bufs, &kgdbfdc_wbuflen, 1);
-	/* Relocate any remaining data to beginnning of buffer */
+	/* Relocate any remaining data to beginning of buffer */
 	kgdbfdc_wbuflen -= word.bytes;
 	for (i = 0; i < kgdbfdc_wbuflen; ++i)
 		kgdbfdc_wbuf[i] = kgdbfdc_wbuf[i + word.bytes];

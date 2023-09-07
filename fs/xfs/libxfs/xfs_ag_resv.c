@@ -264,7 +264,7 @@ xfs_ag_resv_init(
 		if (error)
 			goto out;
 
-		error = xfs_finobt_calc_reserves(mp, tp, pag, &ask, &used);
+		error = xfs_finobt_calc_reserves(pag, tp, &ask, &used);
 		if (error)
 			goto out;
 
@@ -322,7 +322,7 @@ out:
 	 * address.
 	 */
 	if (has_resv) {
-		error2 = xfs_alloc_pagf_init(mp, tp, pag->pag_agno, 0);
+		error2 = xfs_alloc_read_agf(pag, tp, 0, NULL);
 		if (error2)
 			return error2;
 

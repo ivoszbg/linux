@@ -18,6 +18,8 @@
 #include <linux/module.h>
 #include <sound/soc.h>
 
+#define TDM_CHANNELS	8
+
 enum be_id {
 	HEADSET_BE_ID = 0,
 	AMP_BE_ID,
@@ -26,6 +28,7 @@ enum be_id {
 
 enum cpu_endpoints {
 	NONE = 0,
+	I2S_HS,
 	I2S_SP,
 	I2S_BT,
 	DMIC,
@@ -37,6 +40,14 @@ enum codec_endpoints {
 	RT1019,
 	MAX98360A,
 	RT5682S,
+	NAU8825,
+	NAU8821,
+	MAX98388,
+};
+
+enum platform_end_point {
+	RENOIR = 0,
+	REMBRANDT,
 };
 
 struct acp_card_drvdata {
@@ -47,11 +58,15 @@ struct acp_card_drvdata {
 	unsigned int amp_codec_id;
 	unsigned int dmic_codec_id;
 	unsigned int dai_fmt;
+	unsigned int platform;
 	struct clk *wclk;
 	struct clk *bclk;
+	bool soc_mclk;
+	bool tdm_mode;
 };
 
 int acp_sofdsp_dai_links_create(struct snd_soc_card *card);
 int acp_legacy_dai_links_create(struct snd_soc_card *card);
+extern const struct dmi_system_id acp_quirk_table[];
 
 #endif

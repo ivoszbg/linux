@@ -25,21 +25,23 @@
  * then this function isn't applicable.  This function may sleep, so it must be
  * called from a workqueue rather than from the bio's bi_end_io callback.
  *
- * This function sets PG_error on any pages that contain any blocks that failed
- * to be decrypted.  The filesystem must not mark such pages uptodate.
+ * Return: %true on success; %false on failure.  On failure, bio->bi_status is
+ *	   also set to an error status.
  */
-void fscrypt_decrypt_bio(struct bio *bio)
+bool fscrypt_decrypt_bio(struct bio *bio)
 {
-	struct bio_vec *bv;
-	struct bvec_iter_all iter_all;
+	struct folio_iter fi;
 
-	bio_for_each_segment_all(bv, bio, iter_all) {
-		struct page *page = bv->bv_page;
-		int ret = fscrypt_decrypt_pagecache_blocks(page, bv->bv_len,
-							   bv->bv_offset);
-		if (ret)
-			SetPageError(page);
+	bio_for_each_folio_all(fi, bio) {
+		int err = fscrypt_decrypt_pagecache_blocks(fi.folio, fi.length,
+							   fi.offset);
+
+		if (err) {
+			bio->bi_status = errno_to_blk_status(err);
+			return false;
+		}
 	}
+	return true;
 }
 EXPORT_SYMBOL(fscrypt_decrypt_bio);
 
@@ -67,7 +69,7 @@ static int fscrypt_zeroout_range_inline_crypt(const struct inode *inode,
 					pblk << (blockbits - SECTOR_SHIFT);
 		}
 		ret = bio_add_page(bio, ZERO_PAGE(0), bytes_this_page, 0);
-		if (WARN_ON(ret != bytes_this_page)) {
+		if (WARN_ON_ONCE(ret != bytes_this_page)) {
 			err = -EIO;
 			goto out;
 		}
@@ -145,7 +147,7 @@ int fscrypt_zeroout_range(const struct inode *inode, pgoff_t lblk,
 			break;
 	}
 	nr_pages = i;
-	if (WARN_ON(nr_pages <= 0))
+	if (WARN_ON_ONCE(nr_pages <= 0))
 		return -EINVAL;
 
 	/* This always succeeds since __GFP_DIRECT_RECLAIM is set. */
@@ -168,7 +170,7 @@ int fscrypt_zeroout_range(const struct inode *inode, pgoff_t lblk,
 			offset += blocksize;
 			if (offset == PAGE_SIZE || len == 0) {
 				ret = bio_add_page(bio, pages[i++], offset, 0);
-				if (WARN_ON(ret != offset)) {
+				if (WARN_ON_ONCE(ret != offset)) {
 					err = -EIO;
 					goto out;
 				}

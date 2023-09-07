@@ -184,15 +184,14 @@ vsp1_entity_get_pad_selection(struct vsp1_entity *entity,
 int vsp1_entity_init_cfg(struct v4l2_subdev *subdev,
 			 struct v4l2_subdev_state *sd_state)
 {
-	struct v4l2_subdev_format format;
 	unsigned int pad;
 
 	for (pad = 0; pad < subdev->entity.num_pads - 1; ++pad) {
-		memset(&format, 0, sizeof(format));
-
-		format.pad = pad;
-		format.which = sd_state ? V4L2_SUBDEV_FORMAT_TRY
-			     : V4L2_SUBDEV_FORMAT_ACTIVE;
+		struct v4l2_subdev_format format = {
+			.pad = pad,
+			.which = sd_state ? V4L2_SUBDEV_FORMAT_TRY
+			       : V4L2_SUBDEV_FORMAT_ACTIVE,
+		};
 
 		v4l2_subdev_call(subdev, pad, set_fmt, sd_state, &format);
 	}
@@ -516,8 +515,8 @@ int vsp1_entity_link_setup(struct media_entity *entity,
  * higher than one for the data pipelines, except for the links to the HGO and
  * HGT that can be enabled in addition to a regular data link. When traversing
  * outgoing links this function ignores HGO and HGT entities and should thus be
- * used in place of the generic media_entity_remote_pad() function to traverse
- * data pipelines.
+ * used in place of the generic media_pad_remote_pad_first() function to
+ * traverse data pipelines.
  *
  * Return a pointer to the pad at the remote end of the first found enabled
  * link, or NULL if no enabled link has been found.

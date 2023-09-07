@@ -22,8 +22,9 @@
 #include <linux/gfp.h>
 #include <linux/fsl/edac.h>
 
-#include <linux/of_platform.h>
-#include <linux/of_device.h>
+#include <linux/of.h>
+#include <linux/of_address.h>
+#include <linux/of_irq.h>
 #include "edac_module.h"
 #include "mpc85xx_edac.h"
 #include "fsl_ddr_edac.h"
@@ -709,5 +710,4 @@ module_exit(mpc85xx_mc_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Montavista Software, Inc.");
 module_param(edac_op_state, int, 0444);
-MODULE_PARM_DESC(edac_op_state,
-		 "EDAC Error Reporting state: 0=Poll, 2=Interrupt");
+MODULE_PARM_DESC(edac_op_state, "EDAC Error Reporting state: 0=Poll, 2=Interrupt");

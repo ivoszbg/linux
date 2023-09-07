@@ -248,11 +248,24 @@ void panfrost_mmu_reset(struct panfrost_device *pfdev)
 	mmu_write(pfdev, MMU_INT_MASK, ~0);
 }
 
-static size_t get_pgsize(u64 addr, size_t size)
+static size_t get_pgsize(u64 addr, size_t size, size_t *count)
 {
-	if (addr & (SZ_2M - 1) || size < SZ_2M)
-		return SZ_4K;
+	/*
+	 * io-pgtable only operates on multiple pages within a single table
+	 * entry, so we need to split at boundaries of the table size, i.e.
+	 * the next block size up. The distance from address A to the next
+	 * boundary of block size B is logically B - A % B, but in unsigned
+	 * two's complement where B is a power of two we get the equivalence
+	 * B - A % B == (B - A) % B == (n * B - A) % B, and choose n = 0 :)
+	 */
+	size_t blk_offset = -addr % SZ_2M;
 
+	if (blk_offset || size < SZ_2M) {
+		*count = min_not_zero(blk_offset, size) / SZ_4K;
+		return SZ_4K;
+	}
+	blk_offset = -addr % SZ_1G ?: SZ_1G;
+	*count = min(blk_offset, size) / SZ_2M;
 	return SZ_2M;
 }
 
@@ -269,7 +282,7 @@ static void panfrost_mmu_flush_range(struct panfrost_device *pfdev,
 	if (pm_runtime_active(pfdev->dev))
 		mmu_hw_do_operation(pfdev, mmu, iova, size, AS_COMMAND_FLUSH_PT);
 
-	pm_runtime_put_sync_autosuspend(pfdev->dev);
+	pm_runtime_put_autosuspend(pfdev->dev);
 }
 
 static int mmu_map_sg(struct panfrost_device *pfdev, struct panfrost_mmu *mmu,
@@ -287,12 +300,16 @@ static int mmu_map_sg(struct panfrost_device *pfdev, struct panfrost_mmu *mmu,
 		dev_dbg(pfdev->dev, "map: as=%d, iova=%llx, paddr=%lx, len=%zx", mmu->as, iova, paddr, len);
 
 		while (len) {
-			size_t pgsize = get_pgsize(iova | paddr, len);
+			size_t pgcount, mapped = 0;
+			size_t pgsize = get_pgsize(iova | paddr, len, &pgcount);
 
-			ops->map(ops, iova, paddr, pgsize, prot, GFP_KERNEL);
-			iova += pgsize;
-			paddr += pgsize;
-			len -= pgsize;
+			ops->map_pages(ops, iova, paddr, pgsize, pgcount, prot,
+				       GFP_KERNEL, &mapped);
+			/* Don't get stuck if things have gone wrong */
+			mapped = max(mapped, pgsize);
+			iova += mapped;
+			paddr += mapped;
+			len -= mapped;
 		}
 	}
 
@@ -344,15 +361,17 @@ void panfrost_mmu_unmap(struct panfrost_gem_mapping *mapping)
 		mapping->mmu->as, iova, len);
 
 	while (unmapped_len < len) {
-		size_t unmapped_page;
-		size_t pgsize = get_pgsize(iova, len - unmapped_len);
+		size_t unmapped_page, pgcount;
+		size_t pgsize = get_pgsize(iova, len - unmapped_len, &pgcount);
 
-		if (ops->iova_to_phys(ops, iova)) {
-			unmapped_page = ops->unmap(ops, iova, pgsize, NULL);
-			WARN_ON(unmapped_page != pgsize);
+		if (bo->is_heap)
+			pgcount = 1;
+		if (!bo->is_heap || ops->iova_to_phys(ops, iova)) {
+			unmapped_page = ops->unmap_pages(ops, iova, pgsize, pgcount, NULL);
+			WARN_ON(unmapped_page != pgsize * pgcount);
 		}
-		iova += pgsize;
-		unmapped_len += pgsize;
+		iova += pgsize * pgcount;
+		unmapped_len += pgsize * pgcount;
 	}
 
 	panfrost_mmu_flush_range(pfdev, mapping->mmu,
@@ -424,6 +443,7 @@ static int panfrost_mmu_map_fault_addr(struct panfrost_device *pfdev, int as,
 	struct panfrost_gem_mapping *bomapping;
 	struct panfrost_gem_object *bo;
 	struct address_space *mapping;
+	struct drm_gem_object *obj;
 	pgoff_t page_offset;
 	struct sg_table *sgt;
 	struct page **pages;
@@ -446,15 +466,16 @@ static int panfrost_mmu_map_fault_addr(struct panfrost_device *pfdev, int as,
 	page_offset = addr >> PAGE_SHIFT;
 	page_offset -= bomapping->mmnode.start;
 
-	mutex_lock(&bo->base.pages_lock);
+	obj = &bo->base.base;
+
+	dma_resv_lock(obj->resv, NULL);
 
 	if (!bo->base.pages) {
 		bo->sgts = kvmalloc_array(bo->base.base.size / SZ_2M,
 				     sizeof(struct sg_table), GFP_KERNEL | __GFP_ZERO);
 		if (!bo->sgts) {
-			mutex_unlock(&bo->base.pages_lock);
 			ret = -ENOMEM;
-			goto err_bo;
+			goto err_unlock;
 		}
 
 		pages = kvmalloc_array(bo->base.base.size >> PAGE_SHIFT,
@@ -462,9 +483,8 @@ static int panfrost_mmu_map_fault_addr(struct panfrost_device *pfdev, int as,
 		if (!pages) {
 			kvfree(bo->sgts);
 			bo->sgts = NULL;
-			mutex_unlock(&bo->base.pages_lock);
 			ret = -ENOMEM;
-			goto err_bo;
+			goto err_unlock;
 		}
 		bo->base.pages = pages;
 		bo->base.pages_use_count = 1;
@@ -472,7 +492,6 @@ static int panfrost_mmu_map_fault_addr(struct panfrost_device *pfdev, int as,
 		pages = bo->base.pages;
 		if (pages[page_offset]) {
 			/* Pages are already mapped, bail out. */
-			mutex_unlock(&bo->base.pages_lock);
 			goto out;
 		}
 	}
@@ -483,13 +502,11 @@ static int panfrost_mmu_map_fault_addr(struct panfrost_device *pfdev, int as,
 	for (i = page_offset; i < page_offset + NUM_FAULT_PAGES; i++) {
 		pages[i] = shmem_read_mapping_page(mapping, i);
 		if (IS_ERR(pages[i])) {
-			mutex_unlock(&bo->base.pages_lock);
 			ret = PTR_ERR(pages[i]);
+			pages[i] = NULL;
 			goto err_pages;
 		}
 	}
-
-	mutex_unlock(&bo->base.pages_lock);
 
 	sgt = &bo->sgts[page_offset / (SZ_2M / PAGE_SIZE)];
 	ret = sg_alloc_table_from_pages(sgt, pages + page_offset,
@@ -509,6 +526,8 @@ static int panfrost_mmu_map_fault_addr(struct panfrost_device *pfdev, int as,
 	dev_dbg(pfdev->dev, "mapped page fault @ AS%d %llx", as, addr);
 
 out:
+	dma_resv_unlock(obj->resv);
+
 	panfrost_gem_mapping_put(bomapping);
 
 	return 0;
@@ -517,8 +536,10 @@ err_map:
 	sg_free_table(sgt);
 err_pages:
 	drm_gem_shmem_put_pages(&bo->base);
+err_unlock:
+	dma_resv_unlock(obj->resv);
 err_bo:
-	drm_gem_object_put(&bo->base.base);
+	panfrost_gem_mapping_put(bomapping);
 	return ret;
 }
 

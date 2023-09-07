@@ -216,6 +216,8 @@ static const char * const snd_pcm_format_names[] = {
 /**
  * snd_pcm_format_name - Return a name string for the given PCM format
  * @format: PCM format
+ *
+ * Return: the format name string
  */
 const char *snd_pcm_format_name(snd_pcm_format_t format)
 {
@@ -385,7 +387,7 @@ static void snd_pcm_substream_proc_hw_params_read(struct snd_info_entry *entry,
 		snd_iprintf(buffer, "closed\n");
 		goto unlock;
 	}
-	if (runtime->status->state == SNDRV_PCM_STATE_OPEN) {
+	if (runtime->state == SNDRV_PCM_STATE_OPEN) {
 		snd_iprintf(buffer, "no setup\n");
 		goto unlock;
 	}
@@ -422,7 +424,7 @@ static void snd_pcm_substream_proc_sw_params_read(struct snd_info_entry *entry,
 		snd_iprintf(buffer, "closed\n");
 		goto unlock;
 	}
-	if (runtime->status->state == SNDRV_PCM_STATE_OPEN) {
+	if (runtime->state == SNDRV_PCM_STATE_OPEN) {
 		snd_iprintf(buffer, "no setup\n");
 		goto unlock;
 	}
@@ -602,7 +604,7 @@ static const struct attribute_group *pcm_dev_attr_groups[];
 #ifdef CONFIG_PM_SLEEP
 static int do_pcm_suspend(struct device *dev)
 {
-	struct snd_pcm_str *pstr = container_of(dev, struct snd_pcm_str, dev);
+	struct snd_pcm_str *pstr = dev_get_drvdata(dev);
 
 	if (!pstr->pcm->no_device_suspend)
 		snd_pcm_suspend_all(pstr->pcm);
@@ -648,11 +650,14 @@ int snd_pcm_new_stream(struct snd_pcm *pcm, int stream, int substream_count)
 	if (!substream_count)
 		return 0;
 
-	snd_device_initialize(&pstr->dev, pcm->card);
-	pstr->dev.groups = pcm_dev_attr_groups;
-	pstr->dev.type = &pcm_dev_type;
-	dev_set_name(&pstr->dev, "pcmC%iD%i%c", pcm->card->number, pcm->device,
+	err = snd_device_alloc(&pstr->dev, pcm->card);
+	if (err < 0)
+		return err;
+	dev_set_name(pstr->dev, "pcmC%iD%i%c", pcm->card->number, pcm->device,
 		     stream == SNDRV_PCM_STREAM_PLAYBACK ? 'p' : 'c');
+	pstr->dev->groups = pcm_dev_attr_groups;
+	pstr->dev->type = &pcm_dev_type;
+	dev_set_drvdata(pstr->dev, pstr);
 
 	if (!pcm->internal) {
 		err = snd_pcm_stream_proc_init(pstr);
@@ -812,9 +817,7 @@ static void free_chmap(struct snd_pcm_str *pstr)
 	if (pstr->chmap_kctl) {
 		struct snd_card *card = pstr->pcm->card;
 
-		down_write(&card->controls_rwsem);
 		snd_ctl_remove(card, pstr->chmap_kctl);
-		up_write(&card->controls_rwsem);
 		pstr->chmap_kctl = NULL;
 	}
 }
@@ -845,7 +848,7 @@ static void snd_pcm_free_stream(struct snd_pcm_str * pstr)
 #endif
 	free_chmap(pstr);
 	if (pstr->substream_count)
-		put_device(&pstr->dev);
+		put_device(pstr->dev);
 }
 
 #if IS_ENABLED(CONFIG_SND_PCM_OSS)
@@ -968,7 +971,7 @@ int snd_pcm_attach_substream(struct snd_pcm *pcm, int stream,
 	init_waitqueue_head(&runtime->sleep);
 	init_waitqueue_head(&runtime->tsleep);
 
-	runtime->status->state = SNDRV_PCM_STATE_OPEN;
+	__snd_pcm_set_state(runtime, SNDRV_PCM_STATE_OPEN);
 	mutex_init(&runtime->buffer_mutex);
 	atomic_set(&runtime->buffer_accessing, 0);
 
@@ -1005,6 +1008,7 @@ void snd_pcm_detach_substream(struct snd_pcm_substream *substream)
 		substream->runtime = NULL;
 	}
 	mutex_destroy(&runtime->buffer_mutex);
+	snd_fasync_free(runtime->fasync);
 	kfree(runtime);
 	put_pid(substream->pid);
 	substream->pid = NULL;
@@ -1014,7 +1018,7 @@ void snd_pcm_detach_substream(struct snd_pcm_substream *substream)
 static ssize_t pcm_class_show(struct device *dev,
 			      struct device_attribute *attr, char *buf)
 {
-	struct snd_pcm_str *pstr = container_of(dev, struct snd_pcm_str, dev);
+	struct snd_pcm_str *pstr = dev_get_drvdata(dev);
 	struct snd_pcm *pcm = pstr->pcm;
 	const char *str;
 	static const char *strs[SNDRV_PCM_CLASS_LAST + 1] = {
@@ -1028,7 +1032,7 @@ static ssize_t pcm_class_show(struct device *dev,
 		str = "none";
 	else
 		str = strs[pcm->dev_class];
-	return sprintf(buf, "%s\n", str);
+	return sysfs_emit(buf, "%s\n", str);
 }
 
 static DEVICE_ATTR_RO(pcm_class);
@@ -1075,7 +1079,7 @@ static int snd_pcm_dev_register(struct snd_device *device)
 		/* register pcm */
 		err = snd_register_device(devtype, pcm->card, pcm->device,
 					  &snd_pcm_f_ops[cidx], pcm,
-					  &pcm->streams[cidx].dev);
+					  pcm->streams[cidx].dev);
 		if (err < 0) {
 			list_del_init(&pcm->list);
 			goto unlock;
@@ -1109,7 +1113,8 @@ static int snd_pcm_dev_disconnect(struct snd_device *device)
 			if (snd_pcm_running(substream))
 				snd_pcm_stop(substream, SNDRV_PCM_STATE_DISCONNECTED);
 			/* to be sure, set the state unconditionally */
-			substream->runtime->status->state = SNDRV_PCM_STATE_DISCONNECTED;
+			__snd_pcm_set_state(substream->runtime,
+					    SNDRV_PCM_STATE_DISCONNECTED);
 			wake_up(&substream->runtime->sleep);
 			wake_up(&substream->runtime->tsleep);
 		}
@@ -1121,7 +1126,8 @@ static int snd_pcm_dev_disconnect(struct snd_device *device)
 
 	pcm_call_notify(pcm, n_disconnect);
 	for (cidx = 0; cidx < 2; cidx++) {
-		snd_unregister_device(&pcm->streams[cidx].dev);
+		if (pcm->streams[cidx].dev)
+			snd_unregister_device(pcm->streams[cidx].dev);
 		free_chmap(&pcm->streams[cidx]);
 	}
 	mutex_unlock(&pcm->open_mutex);
@@ -1138,6 +1144,8 @@ static int snd_pcm_dev_disconnect(struct snd_device *device)
  * This adds the given notifier to the global list so that the callback is
  * called for each registered PCM devices.  This exists only for PCM OSS
  * emulation, so far.
+ *
+ * Return: zero if successful, or a negative error code
  */
 int snd_pcm_notify(struct snd_pcm_notify *notify, int nfree)
 {

@@ -58,9 +58,17 @@ const option_t on_errors_arr[] = {
 };
 
 /**
- * simple_getbool -
+ * simple_getbool - convert input string to a boolean value
+ * @s: input string to convert
+ * @setval: where to store the output boolean value
  *
  * Copied from old ntfs driver (which copied from vfat driver).
+ *
+ * "1", "yes", "true", or an empty string are converted to %true.
+ * "0", "no", and "false" are converted to %false.
+ *
+ * Return: %1 if the string is converted or was empty and *setval contains it;
+ *	   %0 if the string was not valid.
  */
 static int simple_getbool(char *s, bool *setval)
 {
@@ -1612,7 +1620,7 @@ read_partial_attrdef_page:
 		memcpy((u8*)vol->attrdef + (index++ << PAGE_SHIFT),
 				page_address(page), size);
 		ntfs_unmap_page(page);
-	};
+	}
 	if (size == PAGE_SIZE) {
 		size = i_size & ~PAGE_MASK;
 		if (size)
@@ -1681,7 +1689,7 @@ read_partial_upcase_page:
 		memcpy((char*)vol->upcase + (index++ << PAGE_SHIFT),
 				page_address(page), size);
 		ntfs_unmap_page(page);
-	};
+	}
 	if (size == PAGE_SIZE) {
 		size = i_size & ~PAGE_MASK;
 		if (size)
@@ -2092,7 +2100,8 @@ get_ctx_vol_failed:
 	// TODO: Initialize security.
 	/* Get the extended system files' directory inode. */
 	vol->extend_ino = ntfs_iget(sb, FILE_Extend);
-	if (IS_ERR(vol->extend_ino) || is_bad_inode(vol->extend_ino)) {
+	if (IS_ERR(vol->extend_ino) || is_bad_inode(vol->extend_ino) ||
+	    !S_ISDIR(vol->extend_ino->i_mode)) {
 		if (!IS_ERR(vol->extend_ino))
 			iput(vol->extend_ino);
 		ntfs_error(sb, "Failed to load $Extend.");
@@ -2656,7 +2665,7 @@ static int ntfs_write_inode(struct inode *vi, struct writeback_control *wbc)
 }
 #endif
 
-/**
+/*
  * The complete super operations.
  */
 static const struct super_operations ntfs_sops = {

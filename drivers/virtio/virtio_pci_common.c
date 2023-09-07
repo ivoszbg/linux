@@ -214,9 +214,15 @@ static void vp_del_vq(struct virtqueue *vq)
 	struct virtio_pci_vq_info *info = vp_dev->vqs[vq->index];
 	unsigned long flags;
 
-	spin_lock_irqsave(&vp_dev->lock, flags);
-	list_del(&info->node);
-	spin_unlock_irqrestore(&vp_dev->lock, flags);
+	/*
+	 * If it fails during re-enable reset vq. This way we won't rejoin
+	 * info->node to the queue. Prevent unexpected irqs.
+	 */
+	if (!vq->reset) {
+		spin_lock_irqsave(&vp_dev->lock, flags);
+		list_del(&info->node);
+		spin_unlock_irqrestore(&vp_dev->lock, flags);
+	}
 
 	vp_dev->del_vq(info);
 	kfree(info);
@@ -403,6 +409,9 @@ int vp_find_vqs(struct virtio_device *vdev, unsigned int nvqs,
 	err = vp_find_vqs_msix(vdev, nvqs, vqs, callbacks, names, false, ctx, desc);
 	if (!err)
 		return 0;
+	/* Is there an interrupt? If not give up. */
+	if (!(to_vp_device(vdev)->pci_dev->irq))
+		return err;
 	/* Finally fall back to regular interrupts. */
 	return vp_find_vqs_intx(vdev, nvqs, vqs, callbacks, names, ctx);
 }
@@ -547,8 +556,6 @@ static int virtio_pci_probe(struct pci_dev *pci_dev,
 	}
 
 	pci_set_master(pci_dev);
-
-	vp_dev->is_legacy = vp_dev->ldev.ioaddr ? true : false;
 
 	rc = register_virtio_device(&vp_dev->vdev);
 	reg_dev = vp_dev;

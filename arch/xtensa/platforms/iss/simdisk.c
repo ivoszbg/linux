@@ -120,9 +120,9 @@ static void simdisk_submit_bio(struct bio *bio)
 	bio_endio(bio);
 }
 
-static int simdisk_open(struct block_device *bdev, fmode_t mode)
+static int simdisk_open(struct gendisk *disk, blk_mode_t mode)
 {
-	struct simdisk *dev = bdev->bd_disk->private_data;
+	struct simdisk *dev = disk->private_data;
 
 	spin_lock(&dev->lock);
 	++dev->users;
@@ -130,7 +130,7 @@ static int simdisk_open(struct block_device *bdev, fmode_t mode)
 	return 0;
 }
 
-static void simdisk_release(struct gendisk *disk, fmode_t mode)
+static void simdisk_release(struct gendisk *disk)
 {
 	struct simdisk *dev = disk->private_data;
 	spin_lock(&dev->lock);
@@ -290,7 +290,7 @@ static int __init simdisk_setup(struct simdisk *dev, int which,
 	return 0;
 
 out_cleanup_disk:
-	blk_cleanup_disk(dev->gd);
+	put_disk(dev->gd);
 out:
 	return err;
 }
@@ -344,7 +344,7 @@ static void simdisk_teardown(struct simdisk *dev, int which,
 	simdisk_detach(dev);
 	if (dev->gd) {
 		del_gendisk(dev->gd);
-		blk_cleanup_disk(dev->gd);
+		put_disk(dev->gd);
 	}
 	remove_proc_entry(tmp, procdir);
 }

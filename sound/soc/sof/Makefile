@@ -1,10 +1,19 @@
 # SPDX-License-Identifier: (GPL-2.0-only OR BSD-3-Clause)
 
 snd-sof-objs := core.o ops.o loader.o ipc.o pcm.o pm.o debug.o topology.o\
-		control.o trace.o iomem-utils.o sof-audio.o stream-ipc.o\
-		ipc3-topology.o ipc3-control.o ipc3.o ipc3-pcm.o ipc3-loader.o\
-		ipc3-dtrace.o\
-		ipc4.o ipc4-loader.o
+		control.o trace.o iomem-utils.o sof-audio.o stream-ipc.o
+
+# IPC implementations
+ifneq ($(CONFIG_SND_SOC_SOF_IPC3),)
+snd-sof-objs +=	ipc3.o ipc3-loader.o ipc3-topology.o ipc3-control.o ipc3-pcm.o\
+		ipc3-dtrace.o
+endif
+ifneq ($(CONFIG_SND_SOC_SOF_INTEL_IPC4),)
+snd-sof-objs += ipc4.o ipc4-loader.o ipc4-topology.o ipc4-control.o ipc4-pcm.o\
+		ipc4-mtrace.o
+endif
+
+# SOF client support
 ifneq ($(CONFIG_SND_SOC_SOF_CLIENT),)
 snd-sof-objs += sof-client.o
 endif
@@ -17,7 +26,14 @@ snd-sof-of-objs := sof-of-dev.o
 
 snd-sof-ipc-flood-test-objs := sof-client-ipc-flood-test.o
 snd-sof-ipc-msg-injector-objs := sof-client-ipc-msg-injector.o
+snd-sof-ipc-kernel-injector-objs := sof-client-ipc-kernel-injector.o
 snd-sof-probes-objs := sof-client-probes.o
+ifneq ($(CONFIG_SND_SOC_SOF_IPC3),)
+snd-sof-probes-objs += sof-client-probes-ipc3.o
+endif
+ifneq ($(CONFIG_SND_SOC_SOF_INTEL_IPC4),)
+snd-sof-probes-objs += sof-client-probes-ipc4.o
+endif
 
 snd-sof-nocodec-objs := nocodec.o
 
@@ -34,6 +50,7 @@ obj-$(CONFIG_SND_SOC_SOF_PCI_DEV) += snd-sof-pci.o
 
 obj-$(CONFIG_SND_SOC_SOF_DEBUG_IPC_FLOOD_TEST) += snd-sof-ipc-flood-test.o
 obj-$(CONFIG_SND_SOC_SOF_DEBUG_IPC_MSG_INJECTOR) += snd-sof-ipc-msg-injector.o
+obj-$(CONFIG_SND_SOC_SOF_DEBUG_IPC_KERNEL_INJECTOR) += snd-sof-ipc-kernel-injector.o
 obj-$(CONFIG_SND_SOC_SOF_DEBUG_PROBES) += snd-sof-probes.o
 
 obj-$(CONFIG_SND_SOC_SOF_INTEL_TOPLEVEL) += intel/

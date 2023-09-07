@@ -15,7 +15,7 @@
 #include <linux/err.h>
 #include <fcntl.h>
 #include <unistd.h>
-#include "libbpf_legacy.h"
+#include <libelf.h>
 #include "relo_core.h"
 
 /* make sure libbpf doesn't use kernel-only integer typedefs */
@@ -109,9 +109,9 @@ static inline bool str_has_sfx(const char *str, const char *sfx)
 	size_t str_len = strlen(str);
 	size_t sfx_len = strlen(sfx);
 
-	if (sfx_len <= str_len)
-		return strcmp(str + str_len - sfx_len, sfx);
-	return false;
+	if (sfx_len > str_len)
+		return false;
+	return strcmp(str + str_len - sfx_len, sfx) == 0;
 }
 
 /* Symbol versioning is different between static and shared library.
@@ -351,6 +351,12 @@ enum kern_feature_id {
 	FEAT_MEMCG_ACCOUNT,
 	/* BPF cookie (bpf_get_attach_cookie() BPF helper) support */
 	FEAT_BPF_COOKIE,
+	/* BTF_KIND_ENUM64 support and BTF_KIND_ENUM kflag support */
+	FEAT_BTF_ENUM64,
+	/* Kernel uses syscall wrapper (CONFIG_ARCH_HAS_SYSCALL_WRAPPER) */
+	FEAT_SYSCALL_WRAPPER,
+	/* BPF multi-uprobe link support */
+	FEAT_UPROBE_MULTI_LINK,
 	__FEAT_CNT,
 };
 
@@ -476,8 +482,6 @@ int btf_ext_visit_str_offs(struct btf_ext *btf_ext, str_off_visit_fn visit, void
 __s32 btf__find_by_name_kind_own(const struct btf *btf, const char *type_name,
 				 __u32 kind);
 
-extern enum libbpf_strict_mode libbpf_mode;
-
 typedef int (*kallsyms_cb_t)(unsigned long long sym_addr, char sym_type,
 			     const char *sym_name, void *ctx);
 
@@ -496,12 +500,8 @@ static inline int libbpf_err(int ret)
  */
 static inline int libbpf_err_errno(int ret)
 {
-	if (libbpf_mode & LIBBPF_STRICT_DIRECT_ERRS)
-		/* errno is already assumed to be set on error */
-		return ret < 0 ? -errno : ret;
-
-	/* legacy: on error return -1 directly and don't touch errno */
-	return ret;
+	/* errno is already assumed to be set on error */
+	return ret < 0 ? -errno : ret;
 }
 
 /* handle error for pointer-returning APIs, err is assumed to be < 0 always */
@@ -509,12 +509,7 @@ static inline void *libbpf_err_ptr(int err)
 {
 	/* set errno on error, this doesn't break anything */
 	errno = -err;
-
-	if (libbpf_mode & LIBBPF_STRICT_CLEAN_PTRS)
-		return NULL;
-
-	/* legacy: encode err as ptr */
-	return ERR_PTR(err);
+	return NULL;
 }
 
 /* handle pointer-returning APIs' error handling */
@@ -524,11 +519,7 @@ static inline void *libbpf_ptr(void *ret)
 	if (IS_ERR(ret))
 		errno = -PTR_ERR(ret);
 
-	if (libbpf_mode & LIBBPF_STRICT_CLEAN_PTRS)
-		return IS_ERR(ret) ? NULL : ret;
-
-	/* legacy: pass-through original pointer */
-	return ret;
+	return IS_ERR(ret) ? NULL : ret;
 }
 
 static inline bool str_is_empty(const char *s)
@@ -555,6 +546,7 @@ static inline int ensure_good_fd(int fd)
 		fd = fcntl(fd, F_DUPFD_CLOEXEC, 3);
 		saved_errno = errno;
 		close(old_fd);
+		errno = saved_errno;
 		if (fd < 0) {
 			pr_warn("failed to dup FD %d to FD > 2: %d\n", old_fd, -saved_errno);
 			errno = saved_errno;
@@ -579,5 +571,31 @@ struct bpf_link * usdt_manager_attach_usdt(struct usdt_manager *man,
 					   pid_t pid, const char *path,
 					   const char *usdt_provider, const char *usdt_name,
 					   __u64 usdt_cookie);
+
+static inline bool is_pow_of_2(size_t x)
+{
+	return x && (x & (x - 1)) == 0;
+}
+
+#define PROG_LOAD_ATTEMPTS 5
+int sys_bpf_prog_load(union bpf_attr *attr, unsigned int size, int attempts);
+
+bool glob_match(const char *str, const char *pat);
+
+long elf_find_func_offset(Elf *elf, const char *binary_path, const char *name);
+long elf_find_func_offset_from_file(const char *binary_path, const char *name);
+
+struct elf_fd {
+	Elf *elf;
+	int fd;
+};
+
+int elf_open(const char *binary_path, struct elf_fd *elf_fd);
+void elf_close(struct elf_fd *elf_fd);
+
+int elf_resolve_syms_offsets(const char *binary_path, int cnt,
+			     const char **syms, unsigned long **poffsets);
+int elf_resolve_pattern_offsets(const char *binary_path, const char *pattern,
+				 unsigned long **poffsets, size_t *pcnt);
 
 #endif /* __LIBBPF_LIBBPF_INTERNAL_H */

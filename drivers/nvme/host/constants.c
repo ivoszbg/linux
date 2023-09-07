@@ -6,14 +6,13 @@
 
 #include "nvme.h"
 
-#ifdef CONFIG_NVME_VERBOSE_ERRORS
 static const char * const nvme_ops[] = {
 	[nvme_cmd_flush] = "Flush",
 	[nvme_cmd_write] = "Write",
 	[nvme_cmd_read] = "Read",
 	[nvme_cmd_write_uncor] = "Write Uncorrectable",
 	[nvme_cmd_compare] = "Compare",
-	[nvme_cmd_write_zeroes] = "Write Zeros",
+	[nvme_cmd_write_zeroes] = "Write Zeroes",
 	[nvme_cmd_dsm] = "Dataset Management",
 	[nvme_cmd_verify] = "Verify",
 	[nvme_cmd_resv_register] = "Reservation Register",
@@ -22,7 +21,7 @@ static const char * const nvme_ops[] = {
 	[nvme_cmd_resv_release] = "Reservation Release",
 	[nvme_cmd_zone_mgmt_send] = "Zone Management Send",
 	[nvme_cmd_zone_mgmt_recv] = "Zone Management Receive",
-	[nvme_cmd_zone_append] = "Zone Management Append",
+	[nvme_cmd_zone_append] = "Zone Append",
 };
 
 static const char * const nvme_admin_ops[] = {
@@ -53,6 +52,14 @@ static const char * const nvme_admin_ops[] = {
 	[nvme_admin_security_recv] = "Security Receive",
 	[nvme_admin_sanitize_nvm] = "Sanitize NVM",
 	[nvme_admin_get_lba_status] = "Get LBA Status",
+};
+
+static const char * const nvme_fabrics_ops[] = {
+	[nvme_fabrics_type_property_set] = "Property Set",
+	[nvme_fabrics_type_property_get] = "Property Get",
+	[nvme_fabrics_type_connect] = "Connect",
+	[nvme_fabrics_type_auth_send] = "Authentication Send",
+	[nvme_fabrics_type_auth_receive] = "Authentication Receive",
 };
 
 static const char * const nvme_statuses[] = {
@@ -178,6 +185,7 @@ const unsigned char *nvme_get_opcode_str(u8 opcode)
 		return nvme_ops[opcode];
 	return "Unknown";
 }
+EXPORT_SYMBOL_GPL(nvme_get_opcode_str);
 
 const unsigned char *nvme_get_admin_opcode_str(u8 opcode)
 {
@@ -185,4 +193,11 @@ const unsigned char *nvme_get_admin_opcode_str(u8 opcode)
 		return nvme_admin_ops[opcode];
 	return "Unknown";
 }
-#endif /* CONFIG_NVME_VERBOSE_ERRORS */
+EXPORT_SYMBOL_GPL(nvme_get_admin_opcode_str);
+
+const unsigned char *nvme_get_fabrics_opcode_str(u8 opcode) {
+	if (opcode < ARRAY_SIZE(nvme_fabrics_ops) && nvme_fabrics_ops[opcode])
+		return nvme_fabrics_ops[opcode];
+	return "Unknown";
+}
+EXPORT_SYMBOL_GPL(nvme_get_fabrics_opcode_str);

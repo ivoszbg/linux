@@ -20,6 +20,7 @@
 #define HCLGE_COMM_PHY_IMP_EN_B			2
 #define HCLGE_COMM_MAC_STATS_EXT_EN_B		3
 #define HCLGE_COMM_SYNC_RX_RING_HEAD_EN_B	4
+#define HCLGE_COMM_LLRS_FEC_EN_B		5
 
 #define hclge_comm_dev_phy_imp_supported(ae_dev) \
 	test_bit(HNAE3_DEV_SUPPORT_PHY_IMP_B, (ae_dev)->caps)
@@ -53,7 +54,8 @@
 #define HCLGE_COMM_NIC_SW_RST_RDY		BIT(HCLGE_COMM_NIC_SW_RST_RDY_B)
 #define HCLGE_COMM_NIC_CMQ_DESC_NUM_S		3
 #define HCLGE_COMM_NIC_CMQ_DESC_NUM		1024
-#define HCLGE_COMM_CMDQ_TX_TIMEOUT		30000
+#define HCLGE_COMM_CMDQ_TX_TIMEOUT_DEFAULT	30000
+#define HCLGE_COMM_CMDQ_TX_TIMEOUT_500MS	500000
 
 enum hclge_opcode_type {
 	/* Generic commands */
@@ -102,6 +104,7 @@ enum hclge_opcode_type {
 	HCLGE_OPC_MAC_TNL_INT_EN	= 0x0311,
 	HCLGE_OPC_CLEAR_MAC_TNL_INT	= 0x0312,
 	HCLGE_OPC_COMMON_LOOPBACK       = 0x0315,
+	HCLGE_OPC_QUERY_FEC_STATS	= 0x0316,
 	HCLGE_OPC_CONFIG_FEC_MODE	= 0x031A,
 	HCLGE_OPC_QUERY_ROH_TYPE_INFO	= 0x0389,
 
@@ -150,6 +153,7 @@ enum hclge_opcode_type {
 	HCLGE_OPC_TM_INTERNAL_STS	= 0x0850,
 	HCLGE_OPC_TM_INTERNAL_CNT	= 0x0851,
 	HCLGE_OPC_TM_INTERNAL_STS_1	= 0x0852,
+	HCLGE_OPC_TM_FLUSH		= 0x0872,
 
 	/* Packet buffer allocate commands */
 	HCLGE_OPC_TX_BUFF_ALLOC		= 0x0901,
@@ -292,6 +296,8 @@ enum hclge_opcode_type {
 	HCLGE_PPP_CMD0_INT_CMD		= 0x2100,
 	HCLGE_PPP_CMD1_INT_CMD		= 0x2101,
 	HCLGE_MAC_ETHERTYPE_IDX_RD      = 0x2105,
+	HCLGE_OPC_WOL_GET_SUPPORTED_MODE	= 0x2201,
+	HCLGE_OPC_WOL_CFG		= 0x2202,
 	HCLGE_NCSI_INT_EN		= 0x2401,
 
 	/* ROH MAC commands */
@@ -339,6 +345,12 @@ enum HCLGE_COMM_CAP_BITS {
 	HCLGE_COMM_CAP_RXD_ADV_LAYOUT_B = 15,
 	HCLGE_COMM_CAP_PORT_VLAN_BYPASS_B = 17,
 	HCLGE_COMM_CAP_CQ_B = 18,
+	HCLGE_COMM_CAP_GRO_B = 20,
+	HCLGE_COMM_CAP_FD_B = 21,
+	HCLGE_COMM_CAP_FEC_STATS_B = 25,
+	HCLGE_COMM_CAP_LANE_NUM_B = 27,
+	HCLGE_COMM_CAP_WOL_B = 28,
+	HCLGE_COMM_CAP_TM_FLUSH_B = 31,
 };
 
 enum HCLGE_COMM_API_CAP_BITS {
@@ -349,6 +361,11 @@ enum HCLGE_COMM_API_CAP_BITS {
 struct hclge_comm_caps_bit_map {
 	u16 imp_bit;
 	u16 local_bit;
+};
+
+struct hclge_cmdq_tx_timeout_map {
+	u32 opcode;
+	u32 tx_timeout;
 };
 
 struct hclge_comm_firmware_compat_cmd {

@@ -32,7 +32,6 @@ struct task_struct;
 struct pci_dev;
 
 extern int amd_iommu_detect(void);
-extern int amd_iommu_init_hardware(void);
 
 /**
  * amd_iommu_init_device() - Init device for use with IOMMUv2 driver
@@ -205,5 +204,9 @@ int amd_iommu_pc_set_reg(struct amd_iommu *iommu, u8 bank, u8 cntr, u8 fxn,
 int amd_iommu_pc_get_reg(struct amd_iommu *iommu, u8 bank, u8 cntr, u8 fxn,
 		u64 *value);
 struct amd_iommu *get_amd_iommu(unsigned int idx);
+
+#ifdef CONFIG_AMD_MEM_ENCRYPT
+int amd_iommu_snp_enable(void);
+#endif
 
 #endif /* _ASM_X86_AMD_IOMMU_H */

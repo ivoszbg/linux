@@ -16,7 +16,8 @@
 #include <linux/fb.h>
 #include <linux/mm.h>
 #include <linux/timer.h>
-#include <linux/of_device.h>
+#include <linux/of.h>
+#include <linux/platform_device.h>
 
 #include <asm/io.h>
 #include <asm/upa.h>
@@ -883,7 +884,7 @@ static void ffb_init_fix(struct fb_info *info)
 	} else
 		ffb_type_name = "Elite 3D";
 
-	strlcpy(info->fix.id, ffb_type_name, sizeof(info->fix.id));
+	strscpy(info->fix.id, ffb_type_name, sizeof(info->fix.id));
 
 	info->fix.type = FB_TYPE_PACKED_PIXELS;
 	info->fix.visual = FB_VISUAL_TRUECOLOR;
@@ -929,8 +930,7 @@ static int ffb_probe(struct platform_device *op)
 	/* Don't mention copyarea, so SCROLL_REDRAW is always
 	 * used.  It is the fastest on this chip.
 	 */
-	info->flags = (FBINFO_DEFAULT |
-		       /* FBINFO_HWACCEL_COPYAREA | */
+	info->flags = (/* FBINFO_HWACCEL_COPYAREA | */
 		       FBINFO_HWACCEL_FILLRECT |
 		       FBINFO_HWACCEL_IMAGEBLIT);
 
@@ -1023,7 +1023,7 @@ out_err:
 	return err;
 }
 
-static int ffb_remove(struct platform_device *op)
+static void ffb_remove(struct platform_device *op)
 {
 	struct fb_info *info = dev_get_drvdata(&op->dev);
 	struct ffb_par *par = info->par;
@@ -1035,8 +1035,6 @@ static int ffb_remove(struct platform_device *op)
 	of_iounmap(&op->resource[1], par->dac, sizeof(struct ffb_dac));
 
 	framebuffer_release(info);
-
-	return 0;
 }
 
 static const struct of_device_id ffb_match[] = {
@@ -1056,7 +1054,7 @@ static struct platform_driver ffb_driver = {
 		.of_match_table = ffb_match,
 	},
 	.probe		= ffb_probe,
-	.remove		= ffb_remove,
+	.remove_new	= ffb_remove,
 };
 
 static int __init ffb_init(void)

@@ -6,7 +6,9 @@
 #include <net/bluetooth/bluetooth.h>
 #include <net/bluetooth/hci_core.h>
 
-static struct class *bt_class;
+static const struct class bt_class = {
+	.name = "bluetooth",
+};
 
 static void bt_link_release(struct device *dev)
 {
@@ -36,7 +38,7 @@ void hci_conn_init_sysfs(struct hci_conn *conn)
 	BT_DBG("conn %p", conn);
 
 	conn->dev.type = &bt_link;
-	conn->dev.class = bt_class;
+	conn->dev.class = &bt_class;
 	conn->dev.parent = &hdev->dev;
 
 	device_initialize(&conn->dev);
@@ -47,6 +49,9 @@ void hci_conn_add_sysfs(struct hci_conn *conn)
 	struct hci_dev *hdev = conn->hdev;
 
 	BT_DBG("conn %p", conn);
+
+	if (device_is_registered(&conn->dev))
+		return;
 
 	dev_set_name(&conn->dev, "%s:%d", hdev->name, conn->handle);
 
@@ -101,7 +106,7 @@ void hci_init_sysfs(struct hci_dev *hdev)
 	struct device *dev = &hdev->dev;
 
 	dev->type = &bt_host;
-	dev->class = bt_class;
+	dev->class = &bt_class;
 
 	__module_get(THIS_MODULE);
 	device_initialize(dev);
@@ -109,12 +114,10 @@ void hci_init_sysfs(struct hci_dev *hdev)
 
 int __init bt_sysfs_init(void)
 {
-	bt_class = class_create(THIS_MODULE, "bluetooth");
-
-	return PTR_ERR_OR_ZERO(bt_class);
+	return class_register(&bt_class);
 }
 
 void bt_sysfs_cleanup(void)
 {
-	class_destroy(bt_class);
+	class_unregister(&bt_class);
 }

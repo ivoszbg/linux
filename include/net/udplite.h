@@ -6,6 +6,7 @@
 #define _UDPLITE_H
 
 #include <net/ip6_checksum.h>
+#include <net/udp.h>
 
 /* UDP-Lite socket options */
 #define UDPLITE_SEND_CSCOV   10 /* sender partial coverage (as sent)      */
@@ -22,14 +23,6 @@ static __inline__ int udplite_getfrag(void *from, char *to, int  offset,
 {
 	struct msghdr *msg = from;
 	return copy_from_iter_full(to, len, &msg->msg_iter) ? 0 : -EFAULT;
-}
-
-/* Designate sk as UDP-Lite socket */
-static inline int udplite_sk_init(struct sock *sk)
-{
-	udp_init_sock(sk);
-	udp_sk(sk)->pcflag = UDPLITE_BIT;
-	return 0;
 }
 
 /*
@@ -88,6 +81,4 @@ static inline __wsum udplite_csum(struct sk_buff *skb)
 }
 
 void udplite4_register(void);
-int udplite_get_port(struct sock *sk, unsigned short snum,
-		     int (*scmp)(const struct sock *, const struct sock *));
 #endif	/* _UDPLITE_H */

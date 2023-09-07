@@ -64,7 +64,7 @@ void switchdev_deferred_process(void)
 
 	while ((dfitem = switchdev_deferred_dequeue())) {
 		dfitem->func(dfitem->dev, dfitem->data);
-		dev_put_track(dfitem->dev, &dfitem->dev_tracker);
+		netdev_put(dfitem->dev, &dfitem->dev_tracker);
 		kfree(dfitem);
 	}
 }
@@ -91,7 +91,7 @@ static int switchdev_deferred_enqueue(struct net_device *dev,
 	dfitem->dev = dev;
 	dfitem->func = func;
 	memcpy(dfitem->data, data, data_len);
-	dev_hold_track(dev, &dfitem->dev_tracker, GFP_ATOMIC);
+	netdev_hold(dev, &dfitem->dev_tracker, GFP_ATOMIC);
 	spin_lock_bh(&deferred_lock);
 	list_add_tail(&dfitem->list, &deferred);
 	spin_unlock_bh(&deferred_lock);
@@ -862,3 +862,28 @@ void switchdev_bridge_port_unoffload(struct net_device *brport_dev,
 					  NULL);
 }
 EXPORT_SYMBOL_GPL(switchdev_bridge_port_unoffload);
+
+int switchdev_bridge_port_replay(struct net_device *brport_dev,
+				 struct net_device *dev, const void *ctx,
+				 struct notifier_block *atomic_nb,
+				 struct notifier_block *blocking_nb,
+				 struct netlink_ext_ack *extack)
+{
+	struct switchdev_notifier_brport_info brport_info = {
+		.brport = {
+			.dev = dev,
+			.ctx = ctx,
+			.atomic_nb = atomic_nb,
+			.blocking_nb = blocking_nb,
+		},
+	};
+	int err;
+
+	ASSERT_RTNL();
+
+	err = call_switchdev_blocking_notifiers(SWITCHDEV_BRPORT_REPLAY,
+						brport_dev, &brport_info.info,
+						extack);
+	return notifier_to_errno(err);
+}
+EXPORT_SYMBOL_GPL(switchdev_bridge_port_replay);

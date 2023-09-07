@@ -27,9 +27,9 @@ static int rt711_add_codec_device_props(struct device *sdw_dev)
 	struct fwnode_handle *fwnode;
 	int ret;
 
-	if (!SOF_RT711_JDSRC(sof_sdw_quirk))
+	if (!SOF_JACK_JDSRC(sof_sdw_quirk))
 		return 0;
-	props[0] = PROPERTY_ENTRY_U32("realtek,jd-src", SOF_RT711_JDSRC(sof_sdw_quirk));
+	props[0] = PROPERTY_ENTRY_U32("realtek,jd-src", SOF_JACK_JDSRC(sof_sdw_quirk));
 
 	fwnode = fwnode_create_software_node(props, NULL);
 	if (IS_ERR(fwnode))
@@ -138,6 +138,9 @@ static int rt711_rtd_init(struct snd_soc_pcm_runtime *rtd)
 int sof_sdw_rt711_exit(struct snd_soc_card *card, struct snd_soc_dai_link *dai_link)
 {
 	struct mc_private *ctx = snd_soc_card_get_drvdata(card);
+
+	if (!ctx->headset_codec_dev)
+		return 0;
 
 	device_remove_software_node(ctx->headset_codec_dev);
 	put_device(ctx->headset_codec_dev);

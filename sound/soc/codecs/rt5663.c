@@ -3258,7 +3258,6 @@ static const struct snd_soc_component_driver soc_component_dev_rt5663 = {
 	.set_jack		= rt5663_set_jack_detect,
 	.use_pmdown_time	= 1,
 	.endianness		= 1,
-	.non_legacy_dai_naming	= 1,
 };
 
 static const struct regmap_config rt5663_v2_regmap = {
@@ -3269,7 +3268,7 @@ static const struct regmap_config rt5663_v2_regmap = {
 	.max_register = 0x07fa,
 	.volatile_reg = rt5663_v2_volatile_register,
 	.readable_reg = rt5663_v2_readable_register,
-	.cache_type = REGCACHE_RBTREE,
+	.cache_type = REGCACHE_MAPLE,
 	.reg_defaults = rt5663_v2_reg,
 	.num_reg_defaults = ARRAY_SIZE(rt5663_v2_reg),
 };
@@ -3282,7 +3281,7 @@ static const struct regmap_config rt5663_regmap = {
 	.max_register = 0x03f3,
 	.volatile_reg = rt5663_volatile_register,
 	.readable_reg = rt5663_readable_register,
-	.cache_type = REGCACHE_RBTREE,
+	.cache_type = REGCACHE_MAPLE,
 	.reg_defaults = rt5663_reg,
 	.num_reg_defaults = ARRAY_SIZE(rt5663_reg),
 };
@@ -3711,7 +3710,7 @@ err_enable:
 	return ret;
 }
 
-static int rt5663_i2c_remove(struct i2c_client *i2c)
+static void rt5663_i2c_remove(struct i2c_client *i2c)
 {
 	struct rt5663_priv *rt5663 = i2c_get_clientdata(i2c);
 
@@ -3719,8 +3718,6 @@ static int rt5663_i2c_remove(struct i2c_client *i2c)
 		free_irq(i2c->irq, rt5663);
 
 	regulator_bulk_disable(ARRAY_SIZE(rt5663->supplies), rt5663->supplies);
-
-	return 0;
 }
 
 static void rt5663_i2c_shutdown(struct i2c_client *client)
@@ -3736,7 +3733,7 @@ static struct i2c_driver rt5663_i2c_driver = {
 		.acpi_match_table = ACPI_PTR(rt5663_acpi_match),
 		.of_match_table = of_match_ptr(rt5663_of_match),
 	},
-	.probe_new = rt5663_i2c_probe,
+	.probe = rt5663_i2c_probe,
 	.remove = rt5663_i2c_remove,
 	.shutdown = rt5663_i2c_shutdown,
 	.id_table = rt5663_i2c_id,

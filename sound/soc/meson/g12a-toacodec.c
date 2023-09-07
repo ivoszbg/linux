@@ -162,6 +162,8 @@ static int g12a_toacodec_input_hw_params(struct snd_pcm_substream *substream,
 }
 
 static const struct snd_soc_dai_ops g12a_toacodec_input_ops = {
+	.probe		= meson_codec_glue_input_dai_probe,
+	.remove		= meson_codec_glue_input_dai_remove,
 	.hw_params	= g12a_toacodec_input_hw_params,
 	.set_fmt	= meson_codec_glue_input_set_fmt,
 };
@@ -185,8 +187,6 @@ static const struct snd_soc_dai_ops g12a_toacodec_output_ops = {
 	.id = (xid),							\
 	.playback = TOACODEC_STREAM(xname, "Playback", 8),		\
 	.ops = &g12a_toacodec_input_ops,				\
-	.probe = meson_codec_glue_input_dai_probe,			\
-	.remove = meson_codec_glue_input_dai_remove,			\
 }
 
 #define TOACODEC_OUTPUT(xname, xid) {					\
@@ -242,7 +242,6 @@ static const struct snd_soc_component_driver g12a_toacodec_component_drv = {
 	.dapm_routes		= g12a_toacodec_routes,
 	.num_dapm_routes	= ARRAY_SIZE(g12a_toacodec_routes),
 	.endianness		= 1,
-	.non_legacy_dai_naming	= 1,
 };
 
 static const struct snd_soc_component_driver sm1_toacodec_component_drv = {
@@ -254,7 +253,6 @@ static const struct snd_soc_component_driver sm1_toacodec_component_drv = {
 	.dapm_routes		= g12a_toacodec_routes,
 	.num_dapm_routes	= ARRAY_SIZE(g12a_toacodec_routes),
 	.endianness		= 1,
-	.non_legacy_dai_naming	= 1,
 };
 
 static const struct regmap_config g12a_toacodec_regmap_cfg = {

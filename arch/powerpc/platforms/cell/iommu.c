@@ -16,7 +16,7 @@
 #include <linux/notifier.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
-#include <linux/of_platform.h>
+#include <linux/platform_device.h>
 #include <linux/slab.h>
 #include <linux/memblock.h>
 
@@ -720,8 +720,10 @@ static int __init cell_iommu_init_disabled(void)
 	cell_disable_iommus();
 
 	/* If we have no Axon, we set up the spider DMA magic offset */
-	if (of_find_node_by_name(NULL, "axon") == NULL)
+	np = of_find_node_by_name(NULL, "axon");
+	if (!np)
 		cell_dma_nommu_offset = SPIDER_DMA_OFFSET;
+	of_node_put(np);
 
 	/* Now we need to check to see where the memory is mapped
 	 * in PCI space. We assume that all busses use the same dma

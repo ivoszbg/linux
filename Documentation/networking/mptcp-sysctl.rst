@@ -47,7 +47,6 @@ allow_join_initial_addr_port - BOOLEAN
 	Default: 1
 
 pm_type - INTEGER
-
 	Set the default path manager type to use for each new MPTCP
 	socket. In-kernel path management will control subflow
 	connections and address advertisements according to
@@ -75,3 +74,11 @@ stale_loss_cnt - INTEGER
 	This is a per-namespace sysctl.
 
 	Default: 4
+
+scheduler - STRING
+	Select the scheduler of your choice.
+
+	Support for selection of different schedulers. This is a per-namespace
+	sysctl.
+
+	Default: "default"

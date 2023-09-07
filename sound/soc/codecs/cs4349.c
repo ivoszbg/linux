@@ -260,7 +260,6 @@ static const struct snd_soc_component_driver soc_component_dev_cs4349 = {
 	.idle_bias_on		= 1,
 	.use_pmdown_time	= 1,
 	.endianness		= 1,
-	.non_legacy_dai_naming	= 1,
 };
 
 static const struct regmap_config cs4349_regmap = {
@@ -272,7 +271,7 @@ static const struct regmap_config cs4349_regmap = {
 	.num_reg_defaults	= ARRAY_SIZE(cs4349_reg_defaults),
 	.readable_reg		= cs4349_readable_register,
 	.writeable_reg		= cs4349_writeable_register,
-	.cache_type		= REGCACHE_RBTREE,
+	.cache_type		= REGCACHE_MAPLE,
 };
 
 static int cs4349_i2c_probe(struct i2c_client *client)
@@ -306,14 +305,12 @@ static int cs4349_i2c_probe(struct i2c_client *client)
 		&cs4349_dai, 1);
 }
 
-static int cs4349_i2c_remove(struct i2c_client *client)
+static void cs4349_i2c_remove(struct i2c_client *client)
 {
 	struct cs4349_private *cs4349 = i2c_get_clientdata(client);
 
 	/* Hold down reset */
 	gpiod_set_value_cansleep(cs4349->reset_gpio, 0);
-
-	return 0;
 }
 
 #ifdef CONFIG_PM
@@ -378,7 +375,7 @@ static struct i2c_driver cs4349_i2c_driver = {
 		.pm = &cs4349_runtime_pm,
 	},
 	.id_table	= cs4349_i2c_id,
-	.probe_new	= cs4349_i2c_probe,
+	.probe		= cs4349_i2c_probe,
 	.remove		= cs4349_i2c_remove,
 };
 

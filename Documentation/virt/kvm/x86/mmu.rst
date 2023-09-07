@@ -205,7 +205,7 @@ Shadow pages contain the following information:
   role.passthrough:
     The page is not backed by a guest page table, but its first entry
     points to one.  This is set if NPT uses 5-level page tables (host
-    CR4.LA57=1) and is shadowing L1's 4-level NPT (L1 CR4.LA57=1).
+    CR4.LA57=1) and is shadowing L1's 4-level NPT (L1 CR4.LA57=0).
   gfn:
     Either the guest page table containing the translations shadowed by this
     page, or the base page frame for linear translations.  See role.direct.
@@ -245,7 +245,7 @@ Shadow pages contain the following information:
     unsynchronized children).
   unsync_child_bitmap:
     A bitmap indicating which sptes in spt point (directly or indirectly) at
-    pages that may be unsynchronized.  Used to quickly locate all unsychronized
+    pages that may be unsynchronized.  Used to quickly locate all unsynchronized
     pages reachable from a given page.
   clear_spte_count:
     Only present on 32-bit hosts, where a 64-bit spte cannot be written
@@ -377,7 +377,7 @@ Emulating cr0.wp
 ================
 
 If tdp is not enabled, the host must keep cr0.wp=1 so page write protection
-works for the guest kernel, not guest guest userspace.  When the guest
+works for the guest kernel, not guest userspace.  When the guest
 cr0.wp=1, this does not present a problem.  However when the guest cr0.wp=0,
 we cannot map the permissions for gpte.u=1, gpte.w=0 to any spte (the
 semantics require allowing any guest kernel access plus user read access).

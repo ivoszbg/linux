@@ -2060,7 +2060,7 @@ static const struct usba_udc_errata at91sam9g45_errata = {
 	.pulse_bias = at91sam9g45_pulse_bias,
 };
 
-static const struct usba_ep_config ep_config_sam9[] __initconst = {
+static const struct usba_ep_config ep_config_sam9[] = {
 	{ .nr_banks = 1 },				/* ep 0 */
 	{ .nr_banks = 2, .can_dma = 1, .can_isoc = 1 },	/* ep 1 */
 	{ .nr_banks = 2, .can_dma = 1, .can_isoc = 1 },	/* ep 2 */
@@ -2070,7 +2070,7 @@ static const struct usba_ep_config ep_config_sam9[] __initconst = {
 	{ .nr_banks = 3, .can_dma = 1, .can_isoc = 1 },	/* ep 6 */
 };
 
-static const struct usba_ep_config ep_config_sama5[] __initconst = {
+static const struct usba_ep_config ep_config_sama5[] = {
 	{ .nr_banks = 1 },				/* ep 0 */
 	{ .nr_banks = 3, .can_dma = 1, .can_isoc = 1 },	/* ep 1 */
 	{ .nr_banks = 3, .can_dma = 1, .can_isoc = 1 },	/* ep 2 */
@@ -2165,6 +2165,8 @@ static struct usba_ep * atmel_udc_of_init(struct platform_device *pdev,
 
 	udc->vbus_pin = devm_gpiod_get_optional(&pdev->dev, "atmel,vbus",
 						GPIOD_IN);
+	if (IS_ERR(udc->vbus_pin))
+		return ERR_CAST(udc->vbus_pin);
 
 	if (fifo_mode == 0) {
 		udc->num_ep = udc_config->num_ep;
@@ -2283,15 +2285,13 @@ static int usba_udc_probe(struct platform_device *pdev)
 	udc->gadget = usba_gadget_template;
 	INIT_LIST_HEAD(&udc->gadget.ep_list);
 
-	res = platform_get_resource(pdev, IORESOURCE_MEM, CTRL_IOMEM_ID);
-	udc->regs = devm_ioremap_resource(&pdev->dev, res);
+	udc->regs = devm_platform_get_and_ioremap_resource(pdev, CTRL_IOMEM_ID, &res);
 	if (IS_ERR(udc->regs))
 		return PTR_ERR(udc->regs);
 	dev_info(&pdev->dev, "MMIO registers at %pR mapped at %p\n",
 		 res, udc->regs);
 
-	res = platform_get_resource(pdev, IORESOURCE_MEM, FIFO_IOMEM_ID);
-	udc->fifo = devm_ioremap_resource(&pdev->dev, res);
+	udc->fifo = devm_platform_get_and_ioremap_resource(pdev, FIFO_IOMEM_ID, &res);
 	if (IS_ERR(udc->fifo))
 		return PTR_ERR(udc->fifo);
 	dev_info(&pdev->dev, "FIFO at %pR mapped at %p\n", res, udc->fifo);
@@ -2367,7 +2367,7 @@ static int usba_udc_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static int usba_udc_remove(struct platform_device *pdev)
+static void usba_udc_remove(struct platform_device *pdev)
 {
 	struct usba_udc *udc;
 	int i;
@@ -2380,8 +2380,6 @@ static int usba_udc_remove(struct platform_device *pdev)
 	for (i = 1; i < udc->num_ep; i++)
 		usba_ep_cleanup_debugfs(&udc->usba_ep[i]);
 	usba_cleanup_debugfs(udc);
-
-	return 0;
 }
 
 #ifdef CONFIG_PM_SLEEP
@@ -2447,15 +2445,15 @@ static int usba_udc_resume(struct device *dev)
 static SIMPLE_DEV_PM_OPS(usba_udc_pm_ops, usba_udc_suspend, usba_udc_resume);
 
 static struct platform_driver udc_driver = {
-	.remove		= usba_udc_remove,
+	.probe		= usba_udc_probe,
+	.remove_new	= usba_udc_remove,
 	.driver		= {
 		.name		= "atmel_usba_udc",
 		.pm		= &usba_udc_pm_ops,
 		.of_match_table	= atmel_udc_dt_ids,
 	},
 };
-
-module_platform_driver_probe(udc_driver, usba_udc_probe);
+module_platform_driver(udc_driver);
 
 MODULE_DESCRIPTION("Atmel USBA UDC driver");
 MODULE_AUTHOR("Haavard Skinnemoen (Atmel)");

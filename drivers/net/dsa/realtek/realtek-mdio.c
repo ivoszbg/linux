@@ -20,7 +20,8 @@
  */
 
 #include <linux/module.h>
-#include <linux/of_device.h>
+#include <linux/of.h>
+#include <linux/overflow.h>
 #include <linux/regmap.h>
 
 #include "realtek.h"
@@ -152,7 +153,9 @@ static int realtek_mdio_probe(struct mdio_device *mdiodev)
 	if (!var)
 		return -EINVAL;
 
-	priv = devm_kzalloc(&mdiodev->dev, sizeof(*priv), GFP_KERNEL);
+	priv = devm_kzalloc(&mdiodev->dev,
+			    size_add(sizeof(*priv), var->chip_data_sz),
+			    GFP_KERNEL);
 	if (!priv)
 		return -ENOMEM;
 
@@ -245,8 +248,6 @@ static void realtek_mdio_remove(struct mdio_device *mdiodev)
 	/* leave the device reset asserted */
 	if (priv->reset)
 		gpiod_set_value(priv->reset, 1);
-
-	dev_set_drvdata(&mdiodev->dev, NULL);
 }
 
 static void realtek_mdio_shutdown(struct mdio_device *mdiodev)
@@ -275,7 +276,7 @@ MODULE_DEVICE_TABLE(of, realtek_mdio_of_match);
 static struct mdio_driver realtek_mdio_driver = {
 	.mdiodrv.driver = {
 		.name = "realtek-mdio",
-		.of_match_table = of_match_ptr(realtek_mdio_of_match),
+		.of_match_table = realtek_mdio_of_match,
 	},
 	.probe  = realtek_mdio_probe,
 	.remove = realtek_mdio_remove,

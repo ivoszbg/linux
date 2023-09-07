@@ -691,12 +691,12 @@ tca6507_led_dt_init(struct device *dev)
 		if (fwnode_property_read_string(child, "label", &led.name))
 			led.name = fwnode_get_name(child);
 
-		fwnode_property_read_string(child, "linux,default-trigger",
-					    &led.default_trigger);
+		if (fwnode_property_read_string(child, "linux,default-trigger",
+						&led.default_trigger))
+			led.default_trigger = NULL;
 
 		led.flags = 0;
-		if (fwnode_property_match_string(child, "compatible",
-						 "gpio") >= 0)
+		if (fwnode_device_is_compatible(child, "gpio"))
 			led.flags |= TCA6507_MAKE_GPIO;
 
 		ret = fwnode_property_read_u32(child, "reg", &reg);
@@ -728,8 +728,7 @@ static const struct of_device_id __maybe_unused of_tca6507_leds_match[] = {
 };
 MODULE_DEVICE_TABLE(of, of_tca6507_leds_match);
 
-static int tca6507_probe(struct i2c_client *client,
-		const struct i2c_device_id *id)
+static int tca6507_probe(struct i2c_client *client)
 {
 	struct device *dev = &client->dev;
 	struct i2c_adapter *adapter;
@@ -790,7 +789,7 @@ exit:
 	return err;
 }
 
-static int tca6507_remove(struct i2c_client *client)
+static void tca6507_remove(struct i2c_client *client)
 {
 	int i;
 	struct tca6507_chip *tca = i2c_get_clientdata(client);
@@ -802,8 +801,6 @@ static int tca6507_remove(struct i2c_client *client)
 	}
 	tca6507_remove_gpio(tca);
 	cancel_work_sync(&tca->work);
-
-	return 0;
 }
 
 static struct i2c_driver tca6507_driver = {

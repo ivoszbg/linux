@@ -2903,7 +2903,7 @@ check_hwcfg_error:
 	return ret;
 }
 
-static int hi847_remove(struct i2c_client *client)
+static void hi847_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct hi847 *hi847 = to_hi847(sd);
@@ -2913,8 +2913,6 @@ static int hi847_remove(struct i2c_client *client)
 	v4l2_ctrl_handler_free(sd->ctrl_handler);
 	pm_runtime_disable(&client->dev);
 	mutex_destroy(&hi847->mutex);
-
-	return 0;
 }
 
 static int hi847_probe(struct i2c_client *client)
@@ -3001,12 +2999,12 @@ static struct i2c_driver hi847_i2c_driver = {
 		.pm = &hi847_pm_ops,
 		.acpi_match_table = ACPI_PTR(hi847_acpi_ids),
 	},
-	.probe_new = hi847_probe,
+	.probe = hi847_probe,
 	.remove = hi847_remove,
 };
 
 module_i2c_driver(hi847_i2c_driver);
 
-MODULE_AUTHOR("Shawn Tu <shawnx.tu@intel.com>");
+MODULE_AUTHOR("Shawn Tu");
 MODULE_DESCRIPTION("Hynix HI847 sensor driver");
 MODULE_LICENSE("GPL v2");

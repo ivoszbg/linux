@@ -7,7 +7,7 @@
 #include <linux/delay.h>
 #include <linux/gpio/consumer.h>
 #include <linux/module.h>
-#include <linux/of_device.h>
+#include <linux/of.h>
 #include <linux/of_graph.h>
 #include <linux/pinctrl/consumer.h>
 #include <linux/regulator/consumer.h>
@@ -616,7 +616,7 @@ err_panel_add:
 	return ret;
 }
 
-static int truly_nt35597_remove(struct mipi_dsi_device *dsi)
+static void truly_nt35597_remove(struct mipi_dsi_device *dsi)
 {
 	struct truly_nt35597 *ctx = mipi_dsi_get_drvdata(dsi);
 
@@ -628,7 +628,6 @@ static int truly_nt35597_remove(struct mipi_dsi_device *dsi)
 	}
 
 	drm_panel_remove(&ctx->panel);
-	return 0;
 }
 
 static const struct of_device_id truly_nt35597_of_match[] = {

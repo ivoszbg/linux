@@ -11,7 +11,6 @@
 #include <linux/mmc/slot-gpio.h>
 #include <linux/module.h>
 #include <linux/of.h>
-#include <linux/of_device.h>
 #include <linux/of_irq.h>
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
@@ -370,7 +369,7 @@ static int sdhci_omap_execute_tuning(struct mmc_host *mmc, u32 opcode)
 
 	/*
 	 * Stage 1: Search for a maximum pass window ignoring any
-	 * any single point failures. If the tuning value ends up
+	 * single point failures. If the tuning value ends up
 	 * near it, move away from it in stage 2 below
 	 */
 	while (phase_delay <= MAX_PHASE_DELAY) {
@@ -1298,8 +1297,9 @@ static int sdhci_omap_probe(struct platform_device *pdev)
 	/*
 	 * omap_device_pm_domain has callbacks to enable the main
 	 * functional clock, interface clock and also configure the
-	 * SYSCONFIG register of omap devices. The callback will be invoked
-	 * as part of pm_runtime_get_sync.
+	 * SYSCONFIG register to clear any boot loader set voltage
+	 * capabilities before calling sdhci_setup_host(). The
+	 * callback will be invoked as part of pm_runtime_get_sync.
 	 */
 	pm_runtime_use_autosuspend(dev);
 	pm_runtime_set_autosuspend_delay(dev, 50);
@@ -1393,7 +1393,7 @@ err_pltfm_free:
 	return ret;
 }
 
-static int sdhci_omap_remove(struct platform_device *pdev)
+static void sdhci_omap_remove(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct sdhci_host *host = platform_get_drvdata(pdev);
@@ -1407,8 +1407,6 @@ static int sdhci_omap_remove(struct platform_device *pdev)
 	/* Ensure device gets disabled despite userspace sysfs config */
 	pm_runtime_force_suspend(dev);
 	sdhci_pltfm_free(pdev);
-
-	return 0;
 }
 
 #ifdef CONFIG_PM
@@ -1441,7 +1439,8 @@ static int __maybe_unused sdhci_omap_runtime_suspend(struct device *dev)
 	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
 	struct sdhci_omap_host *omap_host = sdhci_pltfm_priv(pltfm_host);
 
-	sdhci_runtime_suspend_host(host);
+	if (omap_host->con != -EINVAL)
+		sdhci_runtime_suspend_host(host);
 
 	sdhci_omap_context_save(omap_host);
 
@@ -1458,10 +1457,10 @@ static int __maybe_unused sdhci_omap_runtime_resume(struct device *dev)
 
 	pinctrl_pm_select_default_state(dev);
 
-	if (omap_host->con != -EINVAL)
+	if (omap_host->con != -EINVAL) {
 		sdhci_omap_context_restore(omap_host);
-
-	sdhci_runtime_resume_host(host, 0);
+		sdhci_runtime_resume_host(host, 0);
+	}
 
 	return 0;
 }
@@ -1476,7 +1475,7 @@ static const struct dev_pm_ops sdhci_omap_dev_pm_ops = {
 
 static struct platform_driver sdhci_omap_driver = {
 	.probe = sdhci_omap_probe,
-	.remove = sdhci_omap_remove,
+	.remove_new = sdhci_omap_remove,
 	.driver = {
 		   .name = "sdhci-omap",
 		   .probe_type = PROBE_PREFER_ASYNCHRONOUS,

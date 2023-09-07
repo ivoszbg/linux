@@ -467,6 +467,7 @@ static const struct snd_soc_dai_ops sst_media_dai_ops = {
 };
 
 static const struct snd_soc_dai_ops sst_compr_dai_ops = {
+	.compress_new = snd_soc_new_compress,
 	.mute_stream = sst_media_digital_mute,
 };
 
@@ -510,7 +511,6 @@ static struct snd_soc_dai_driver sst_platform_dai[] = {
 },
 {
 	.name = "compress-cpu-dai",
-	.compress_new = snd_soc_new_compress,
 	.ops = &sst_compr_dai_ops,
 	.playback = {
 		.stream_name = "Compress Playback",
@@ -676,10 +676,9 @@ static int sst_soc_pcm_new(struct snd_soc_component *component,
 
 	if (dai->driver->playback.channels_min ||
 			dai->driver->capture.channels_min) {
-		snd_pcm_set_managed_buffer_all(pcm,
-			SNDRV_DMA_TYPE_CONTINUOUS,
-			snd_dma_continuous_data(GFP_DMA),
-			SST_MIN_BUFFER, SST_MAX_BUFFER);
+		snd_pcm_set_managed_buffer_all(pcm, SNDRV_DMA_TYPE_DEV,
+					       pcm->card->dev,
+					       SST_MIN_BUFFER, SST_MAX_BUFFER);
 	}
 	return 0;
 }
@@ -742,10 +741,9 @@ static int sst_platform_probe(struct platform_device *pdev)
 	return ret;
 }
 
-static int sst_platform_remove(struct platform_device *pdev)
+static void sst_platform_remove(struct platform_device *pdev)
 {
 	dev_dbg(&pdev->dev, "sst_platform_remove success\n");
-	return 0;
 }
 
 #ifdef CONFIG_PM_SLEEP
@@ -814,7 +812,7 @@ static struct platform_driver sst_platform_driver = {
 		.pm             = &sst_platform_pm,
 	},
 	.probe		= sst_platform_probe,
-	.remove		= sst_platform_remove,
+	.remove_new	= sst_platform_remove,
 };
 
 module_platform_driver(sst_platform_driver);

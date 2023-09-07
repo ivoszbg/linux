@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0 OR BSD-2-Clause
 /*
- * Copyright 2018-2021 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright 2018-2023 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
 #include "efa_com.h"
@@ -168,7 +168,10 @@ int efa_com_create_cq(struct efa_com_dev *edev,
 			EFA_ADMIN_CREATE_CQ_CMD_INTERRUPT_MODE_ENABLED, 1);
 		create_cmd.eqn = params->eqn;
 	}
-
+	if (params->set_src_addr) {
+		EFA_SET(&create_cmd.cq_caps_2,
+			EFA_ADMIN_CREATE_CQ_CMD_SET_SRC_ADDR, 1);
+	}
 	efa_com_set_dma_addr(params->dma_addr,
 			     &create_cmd.cq_ba.mem_addr_high,
 			     &create_cmd.cq_ba.mem_addr_low);
@@ -790,6 +793,12 @@ int efa_com_get_stats(struct efa_com_dev *edev,
 		result->rdma_read_stats.read_bytes = resp.u.rdma_read_stats.read_bytes;
 		result->rdma_read_stats.read_wr_err = resp.u.rdma_read_stats.read_wr_err;
 		result->rdma_read_stats.read_resp_bytes = resp.u.rdma_read_stats.read_resp_bytes;
+		break;
+	case EFA_ADMIN_GET_STATS_TYPE_RDMA_WRITE:
+		result->rdma_write_stats.write_wrs = resp.u.rdma_write_stats.write_wrs;
+		result->rdma_write_stats.write_bytes = resp.u.rdma_write_stats.write_bytes;
+		result->rdma_write_stats.write_wr_err = resp.u.rdma_write_stats.write_wr_err;
+		result->rdma_write_stats.write_recv_bytes = resp.u.rdma_write_stats.write_recv_bytes;
 		break;
 	}
 

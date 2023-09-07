@@ -1015,7 +1015,7 @@ check_hwcfg_error:
 	return ret;
 }
 
-static int og01a1b_remove(struct i2c_client *client)
+static void og01a1b_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct og01a1b *og01a1b = to_og01a1b(sd);
@@ -1025,8 +1025,6 @@ static int og01a1b_remove(struct i2c_client *client)
 	v4l2_ctrl_handler_free(sd->ctrl_handler);
 	pm_runtime_disable(&client->dev);
 	mutex_destroy(&og01a1b->mutex);
-
-	return 0;
 }
 
 static int og01a1b_probe(struct i2c_client *client)
@@ -1117,12 +1115,12 @@ static struct i2c_driver og01a1b_i2c_driver = {
 		.pm = &og01a1b_pm_ops,
 		.acpi_match_table = ACPI_PTR(og01a1b_acpi_ids),
 	},
-	.probe_new = og01a1b_probe,
+	.probe = og01a1b_probe,
 	.remove = og01a1b_remove,
 };
 
 module_i2c_driver(og01a1b_i2c_driver);
 
-MODULE_AUTHOR("Shawn Tu <shawnx.tu@intel.com>");
+MODULE_AUTHOR("Shawn Tu");
 MODULE_DESCRIPTION("OmniVision OG01A1B sensor driver");
 MODULE_LICENSE("GPL v2");

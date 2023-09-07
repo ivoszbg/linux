@@ -11,9 +11,10 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/sched/signal.h>
+#include <linux/of.h>
 #include <linux/of_address.h>
 #include <linux/of_irq.h>
-#include <linux/of_platform.h>
+#include <linux/platform_device.h>
 #include <linux/property.h>
 #include <linux/slab.h>
 
@@ -239,6 +240,7 @@ static const struct mpc_i2c_divider mpc_i2c_dividers_52xx[] = {
 static int mpc_i2c_get_fdr_52xx(struct device_node *node, u32 clock,
 					  u32 *real_clk)
 {
+	struct fwnode_handle *fwnode = of_fwnode_handle(node);
 	const struct mpc_i2c_divider *div = NULL;
 	unsigned int pvr = mfspr(SPRN_PVR);
 	u32 divider;
@@ -246,12 +248,12 @@ static int mpc_i2c_get_fdr_52xx(struct device_node *node, u32 clock,
 
 	if (clock == MPC_I2C_CLOCK_LEGACY) {
 		/* see below - default fdr = 0x3f -> div = 2048 */
-		*real_clk = mpc5xxx_get_bus_frequency(node) / 2048;
+		*real_clk = mpc5xxx_fwnode_get_bus_frequency(fwnode) / 2048;
 		return -EINVAL;
 	}
 
 	/* Determine divider value */
-	divider = mpc5xxx_get_bus_frequency(node) / clock;
+	divider = mpc5xxx_fwnode_get_bus_frequency(fwnode) / clock;
 
 	/*
 	 * We want to choose an FDR/DFSR that generates an I2C bus speed that
@@ -266,7 +268,7 @@ static int mpc_i2c_get_fdr_52xx(struct device_node *node, u32 clock,
 			break;
 	}
 
-	*real_clk = mpc5xxx_get_bus_frequency(node) / div->divider;
+	*real_clk = mpc5xxx_fwnode_get_bus_frequency(fwnode) / div->divider;
 	return (int)div->fdr;
 }
 
@@ -306,7 +308,6 @@ static void mpc_i2c_setup_512x(struct device_node *node,
 {
 	struct device_node *node_ctrl;
 	void __iomem *ctrl;
-	const u32 *pval;
 	u32 idx;
 
 	/* Enable I2C interrupts for mpc5121 */
@@ -315,9 +316,10 @@ static void mpc_i2c_setup_512x(struct device_node *node,
 	if (node_ctrl) {
 		ctrl = of_iomap(node_ctrl, 0);
 		if (ctrl) {
+			u64 addr;
 			/* Interrupt enable bits for i2c-0/1/2: bit 24/26/28 */
-			pval = of_get_property(node, "reg", NULL);
-			idx = (*pval & 0xff) / 0x20;
+			of_property_read_reg(node, 0, &addr, NULL);
+			idx = (addr & 0xff) / 0x20;
 			setbits32(ctrl, 1 << (24 + idx * 2));
 			iounmap(ctrl);
 		}
@@ -769,7 +771,6 @@ static const struct i2c_algorithm mpc_algo = {
 static struct i2c_adapter mpc_ops = {
 	.owner = THIS_MODULE,
 	.algo = &mpc_algo,
-	.timeout = HZ,
 };
 
 static struct i2c_bus_recovery_info fsl_i2c_recovery_info = {
@@ -780,11 +781,9 @@ static int fsl_i2c_probe(struct platform_device *op)
 {
 	const struct mpc_i2c_data *data;
 	struct mpc_i2c *i2c;
-	const u32 *prop;
-	u32 clock = MPC_I2C_CLOCK_LEGACY;
-	int result = 0;
-	int plen;
 	struct clk *clk;
+	int result;
+	u32 clock;
 	int err;
 
 	i2c = devm_kzalloc(&op->dev, sizeof(*i2c), GFP_KERNEL);
@@ -830,10 +829,10 @@ static int fsl_i2c_probe(struct platform_device *op)
 	if (of_property_read_bool(op->dev.of_node, "fsl,preserve-clocking")) {
 		clock = MPC_I2C_CLOCK_PRESERVE;
 	} else {
-		prop = of_get_property(op->dev.of_node, "clock-frequency",
-					&plen);
-		if (prop && plen == sizeof(u32))
-			clock = *prop;
+		result = of_property_read_u32(op->dev.of_node,
+					      "clock-frequency", &clock);
+		if (result)
+			clock = MPC_I2C_CLOCK_LEGACY;
 	}
 
 	data = device_get_match_data(&op->dev);
@@ -841,16 +840,30 @@ static int fsl_i2c_probe(struct platform_device *op)
 		data->setup(op->dev.of_node, i2c, clock);
 	} else {
 		/* Backwards compatibility */
-		if (of_get_property(op->dev.of_node, "dfsrr", NULL))
+		if (of_property_read_bool(op->dev.of_node, "dfsrr"))
 			mpc_i2c_setup_8xxx(op->dev.of_node, i2c, clock);
 	}
 
-	prop = of_get_property(op->dev.of_node, "fsl,timeout", &plen);
-	if (prop && plen == sizeof(u32)) {
-		mpc_ops.timeout = *prop * HZ / 1000000;
+	/*
+	 * "fsl,timeout" has been marked as deprecated and, to maintain
+	 * backward compatibility, we will only look for it if
+	 * "i2c-scl-clk-low-timeout-us" is not present.
+	 */
+	result = of_property_read_u32(op->dev.of_node,
+				      "i2c-scl-clk-low-timeout-us",
+				      &mpc_ops.timeout);
+	if (result == -EINVAL)
+		result = of_property_read_u32(op->dev.of_node,
+					      "fsl,timeout", &mpc_ops.timeout);
+
+	if (!result) {
+		mpc_ops.timeout *= HZ / 1000000;
 		if (mpc_ops.timeout < 5)
 			mpc_ops.timeout = 5;
+	} else {
+		mpc_ops.timeout = HZ;
 	}
+
 	dev_info(i2c->dev, "timeout %u us\n", mpc_ops.timeout * 1000000 / HZ);
 
 	if (of_property_read_bool(op->dev.of_node, "fsl,i2c-erratum-a004447"))
@@ -878,15 +891,13 @@ static int fsl_i2c_probe(struct platform_device *op)
 	return result;
 };
 
-static int fsl_i2c_remove(struct platform_device *op)
+static void fsl_i2c_remove(struct platform_device *op)
 {
 	struct mpc_i2c *i2c = platform_get_drvdata(op);
 
 	i2c_del_adapter(&i2c->adap);
 
 	clk_disable_unprepare(i2c->clk_per);
-
-	return 0;
 };
 
 static int __maybe_unused mpc_i2c_suspend(struct device *dev)
@@ -947,7 +958,7 @@ MODULE_DEVICE_TABLE(of, mpc_i2c_of_match);
 /* Structure for a device driver */
 static struct platform_driver mpc_i2c_driver = {
 	.probe		= fsl_i2c_probe,
-	.remove		= fsl_i2c_remove,
+	.remove_new	= fsl_i2c_remove,
 	.driver = {
 		.name = DRV_NAME,
 		.of_match_table = mpc_i2c_of_match,

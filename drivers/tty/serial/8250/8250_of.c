@@ -165,16 +165,19 @@ static int of_platform_serial_setup(struct platform_device *ofdev,
 
 	port->dev = &ofdev->dev;
 	port->rs485_config = serial8250_em485_config;
+	port->rs485_supported = serial8250_em485_supported;
 	up->rs485_start_tx = serial8250_em485_start_tx;
 	up->rs485_stop_tx = serial8250_em485_stop_tx;
 
 	switch (type) {
 	case PORT_RT2880:
-		port->iotype = UPIO_AU;
+		ret = rt288x_setup(port);
+		if (ret)
+			goto err_unprepare;
 		break;
 	}
 
-	if (IS_ENABLED(CONFIG_SERIAL_8250_FSL) &&
+	if (IS_REACHABLE(CONFIG_SERIAL_8250_FSL) &&
 	    (of_device_is_compatible(np, "fsl,ns16550") ||
 	     of_device_is_compatible(np, "fsl,16550-FIFO64"))) {
 		port->handle_irq = fsl8250_handle_irq;

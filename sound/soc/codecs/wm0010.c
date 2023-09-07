@@ -789,7 +789,6 @@ static const struct snd_soc_component_driver soc_component_dev_wm0010 = {
 	.num_dapm_routes	= ARRAY_SIZE(wm0010_dapm_routes),
 	.use_pmdown_time	= 1,
 	.endianness		= 1,
-	.non_legacy_dai_naming	= 1,
 };
 
 #define WM0010_RATES (SNDRV_PCM_RATE_44100 | SNDRV_PCM_RATE_48000)
@@ -995,3 +994,6 @@ module_spi_driver(wm0010_spi_driver);
 MODULE_DESCRIPTION("ASoC WM0010 driver");
 MODULE_AUTHOR("Mark Brown <broonie@opensource.wolfsonmicro.com>");
 MODULE_LICENSE("GPL");
+
+MODULE_FIRMWARE("wm0010.dfw");
+MODULE_FIRMWARE("wm0010_stage2.bin");

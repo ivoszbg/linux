@@ -227,13 +227,11 @@ static int sigma_fw_load_control(struct sigmadsp *sigmadsp,
 	if (!ctrl)
 		return -ENOMEM;
 
-	name = kzalloc(name_len + 1, GFP_KERNEL);
+	name = kmemdup_nul(ctrl_chunk->name, name_len, GFP_KERNEL);
 	if (!name) {
 		ret = -ENOMEM;
 		goto err_free_ctrl;
 	}
-	memcpy(name, ctrl_chunk->name, name_len);
-	name[name_len] = '\0';
 	ctrl->name = name;
 
 	/*
@@ -671,36 +669,19 @@ static void sigmadsp_activate_ctrl(struct sigmadsp *sigmadsp,
 	struct sigmadsp_control *ctrl, unsigned int samplerate_mask)
 {
 	struct snd_card *card = sigmadsp->component->card->snd_card;
-	struct snd_kcontrol_volatile *vd;
-	struct snd_ctl_elem_id id;
 	bool active;
-	bool changed = false;
+	int changed;
 
 	active = sigmadsp_samplerate_valid(ctrl->samplerates, samplerate_mask);
-
-	down_write(&card->controls_rwsem);
-	if (!ctrl->kcontrol) {
-		up_write(&card->controls_rwsem);
+	if (!ctrl->kcontrol)
 		return;
-	}
-
-	id = ctrl->kcontrol->id;
-	vd = &ctrl->kcontrol->vd[0];
-	if (active == (bool)(vd->access & SNDRV_CTL_ELEM_ACCESS_INACTIVE)) {
-		vd->access ^= SNDRV_CTL_ELEM_ACCESS_INACTIVE;
-		changed = true;
-	}
-	up_write(&card->controls_rwsem);
-
-	if (active && changed) {
+	changed = snd_ctl_activate_id(card, &ctrl->kcontrol->id, active);
+	if (active && changed > 0) {
 		mutex_lock(&sigmadsp->lock);
 		if (ctrl->cached)
 			sigmadsp_ctrl_write(sigmadsp, ctrl, ctrl->cache);
 		mutex_unlock(&sigmadsp->lock);
 	}
-
-	if (changed)
-		snd_ctl_notify(card, SNDRV_CTL_EVENT_MASK_INFO, &id);
 }
 
 /**

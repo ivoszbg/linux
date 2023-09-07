@@ -62,7 +62,7 @@ Please note that implementation details can be changed.
 
 	At cancel(), simply usage -= PAGE_SIZE.
 
-Under below explanation, we assume CONFIG_MEM_RES_CTRL_SWAP=y.
+Under below explanation, we assume CONFIG_SWAP=y.
 
 4. Anonymous
 ============
@@ -97,7 +97,7 @@ Under below explanation, we assume CONFIG_MEM_RES_CTRL_SWAP=y.
 =============
 
 	Page Cache is charged at
-	- add_to_page_cache_locked().
+	- filemap_add_folio().
 
 	The logic is very clear. (About migration, see below)
 

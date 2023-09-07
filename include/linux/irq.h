@@ -151,7 +151,9 @@ struct irq_common_data {
 #endif
 	void			*handler_data;
 	struct msi_desc		*msi_desc;
+#ifdef CONFIG_SMP
 	cpumask_var_t		affinity;
+#endif
 #ifdef CONFIG_GENERIC_IRQ_EFFECTIVE_AFF_MASK
 	cpumask_var_t		effective_affinity;
 #endif
@@ -221,32 +223,35 @@ struct irq_data {
  *				  irq_chip::irq_set_affinity() when deactivated.
  * IRQD_IRQ_ENABLED_ON_SUSPEND	- Interrupt is enabled on suspend by irq pm if
  *				  irqchip have flag IRQCHIP_ENABLE_WAKEUP_ON_SUSPEND set.
+ * IRQD_RESEND_WHEN_IN_PROGRESS	- Interrupt may fire when already in progress in which
+ *				  case it must be resent at the next available opportunity.
  */
 enum {
 	IRQD_TRIGGER_MASK		= 0xf,
-	IRQD_SETAFFINITY_PENDING	= (1 <<  8),
-	IRQD_ACTIVATED			= (1 <<  9),
-	IRQD_NO_BALANCING		= (1 << 10),
-	IRQD_PER_CPU			= (1 << 11),
-	IRQD_AFFINITY_SET		= (1 << 12),
-	IRQD_LEVEL			= (1 << 13),
-	IRQD_WAKEUP_STATE		= (1 << 14),
-	IRQD_MOVE_PCNTXT		= (1 << 15),
-	IRQD_IRQ_DISABLED		= (1 << 16),
-	IRQD_IRQ_MASKED			= (1 << 17),
-	IRQD_IRQ_INPROGRESS		= (1 << 18),
-	IRQD_WAKEUP_ARMED		= (1 << 19),
-	IRQD_FORWARDED_TO_VCPU		= (1 << 20),
-	IRQD_AFFINITY_MANAGED		= (1 << 21),
-	IRQD_IRQ_STARTED		= (1 << 22),
-	IRQD_MANAGED_SHUTDOWN		= (1 << 23),
-	IRQD_SINGLE_TARGET		= (1 << 24),
-	IRQD_DEFAULT_TRIGGER_SET	= (1 << 25),
-	IRQD_CAN_RESERVE		= (1 << 26),
-	IRQD_MSI_NOMASK_QUIRK		= (1 << 27),
-	IRQD_HANDLE_ENFORCE_IRQCTX	= (1 << 28),
-	IRQD_AFFINITY_ON_ACTIVATE	= (1 << 29),
-	IRQD_IRQ_ENABLED_ON_SUSPEND	= (1 << 30),
+	IRQD_SETAFFINITY_PENDING	= BIT(8),
+	IRQD_ACTIVATED			= BIT(9),
+	IRQD_NO_BALANCING		= BIT(10),
+	IRQD_PER_CPU			= BIT(11),
+	IRQD_AFFINITY_SET		= BIT(12),
+	IRQD_LEVEL			= BIT(13),
+	IRQD_WAKEUP_STATE		= BIT(14),
+	IRQD_MOVE_PCNTXT		= BIT(15),
+	IRQD_IRQ_DISABLED		= BIT(16),
+	IRQD_IRQ_MASKED			= BIT(17),
+	IRQD_IRQ_INPROGRESS		= BIT(18),
+	IRQD_WAKEUP_ARMED		= BIT(19),
+	IRQD_FORWARDED_TO_VCPU		= BIT(20),
+	IRQD_AFFINITY_MANAGED		= BIT(21),
+	IRQD_IRQ_STARTED		= BIT(22),
+	IRQD_MANAGED_SHUTDOWN		= BIT(23),
+	IRQD_SINGLE_TARGET		= BIT(24),
+	IRQD_DEFAULT_TRIGGER_SET	= BIT(25),
+	IRQD_CAN_RESERVE		= BIT(26),
+	IRQD_MSI_NOMASK_QUIRK		= BIT(27),
+	IRQD_HANDLE_ENFORCE_IRQCTX	= BIT(28),
+	IRQD_AFFINITY_ON_ACTIVATE	= BIT(29),
+	IRQD_IRQ_ENABLED_ON_SUSPEND	= BIT(30),
+	IRQD_RESEND_WHEN_IN_PROGRESS    = BIT(31),
 };
 
 #define __irqd_to_state(d) ACCESS_PRIVATE((d)->common, state_use_accessors)
@@ -444,6 +449,16 @@ static inline void irqd_set_affinity_on_activate(struct irq_data *d)
 static inline bool irqd_affinity_on_activate(struct irq_data *d)
 {
 	return __irqd_to_state(d) & IRQD_AFFINITY_ON_ACTIVATE;
+}
+
+static inline void irqd_set_resend_when_in_progress(struct irq_data *d)
+{
+	__irqd_to_state(d) |= IRQD_RESEND_WHEN_IN_PROGRESS;
+}
+
+static inline bool irqd_needs_resend_when_in_progress(struct irq_data *d)
+{
+	return __irqd_to_state(d) & IRQD_RESEND_WHEN_IN_PROGRESS;
 }
 
 #undef __irqd_to_state
@@ -879,21 +894,34 @@ static inline int irq_data_get_node(struct irq_data *d)
 	return irq_common_data_get_node(d->common);
 }
 
-static inline struct cpumask *irq_get_affinity_mask(int irq)
+static inline
+const struct cpumask *irq_data_get_affinity_mask(struct irq_data *d)
+{
+#ifdef CONFIG_SMP
+	return d->common->affinity;
+#else
+	return cpumask_of(0);
+#endif
+}
+
+static inline void irq_data_update_affinity(struct irq_data *d,
+					    const struct cpumask *m)
+{
+#ifdef CONFIG_SMP
+	cpumask_copy(d->common->affinity, m);
+#endif
+}
+
+static inline const struct cpumask *irq_get_affinity_mask(int irq)
 {
 	struct irq_data *d = irq_get_irq_data(irq);
 
-	return d ? d->common->affinity : NULL;
-}
-
-static inline struct cpumask *irq_data_get_affinity_mask(struct irq_data *d)
-{
-	return d->common->affinity;
+	return d ? irq_data_get_affinity_mask(d) : NULL;
 }
 
 #ifdef CONFIG_GENERIC_IRQ_EFFECTIVE_AFF_MASK
 static inline
-struct cpumask *irq_data_get_effective_affinity_mask(struct irq_data *d)
+const struct cpumask *irq_data_get_effective_affinity_mask(struct irq_data *d)
 {
 	return d->common->effective_affinity;
 }
@@ -908,13 +936,14 @@ static inline void irq_data_update_effective_affinity(struct irq_data *d,
 {
 }
 static inline
-struct cpumask *irq_data_get_effective_affinity_mask(struct irq_data *d)
+const struct cpumask *irq_data_get_effective_affinity_mask(struct irq_data *d)
 {
-	return d->common->affinity;
+	return irq_data_get_affinity_mask(d);
 }
 #endif
 
-static inline struct cpumask *irq_get_effective_affinity_mask(unsigned int irq)
+static inline
+const struct cpumask *irq_get_effective_affinity_mask(unsigned int irq)
 {
 	struct irq_data *d = irq_get_irq_data(irq);
 
@@ -1121,6 +1150,7 @@ int irq_gc_set_wake(struct irq_data *d, unsigned int on);
 /* Setup functions for irq_chip_generic */
 int irq_map_generic_chip(struct irq_domain *d, unsigned int virq,
 			 irq_hw_number_t hw_irq);
+void irq_unmap_generic_chip(struct irq_domain *d, unsigned int virq);
 struct irq_chip_generic *
 irq_alloc_generic_chip(const char *name, int nr_ct, unsigned int irq_base,
 		       void __iomem *reg_base, irq_flow_handler_t handler);
@@ -1248,6 +1278,9 @@ int __ipi_send_single(struct irq_desc *desc, unsigned int cpu);
 int __ipi_send_mask(struct irq_desc *desc, const struct cpumask *dest);
 int ipi_send_single(unsigned int virq, unsigned int cpu);
 int ipi_send_mask(unsigned int virq, const struct cpumask *dest);
+
+void ipi_mux_process(void);
+int ipi_mux_create(unsigned int nr_ipi, void (*mux_send)(unsigned int cpu));
 
 #ifdef CONFIG_GENERIC_IRQ_MULTI_HANDLER
 /*

@@ -24,43 +24,43 @@
 	 FLOW_DIS_FIRST_FRAG)
 
 #define NFP_FLOWER_WHITELIST_DISSECTOR \
-	(BIT(FLOW_DISSECTOR_KEY_CONTROL) | \
-	 BIT(FLOW_DISSECTOR_KEY_BASIC) | \
-	 BIT(FLOW_DISSECTOR_KEY_IPV4_ADDRS) | \
-	 BIT(FLOW_DISSECTOR_KEY_IPV6_ADDRS) | \
-	 BIT(FLOW_DISSECTOR_KEY_TCP) | \
-	 BIT(FLOW_DISSECTOR_KEY_PORTS) | \
-	 BIT(FLOW_DISSECTOR_KEY_ETH_ADDRS) | \
-	 BIT(FLOW_DISSECTOR_KEY_VLAN) | \
-	 BIT(FLOW_DISSECTOR_KEY_CVLAN) | \
-	 BIT(FLOW_DISSECTOR_KEY_ENC_KEYID) | \
-	 BIT(FLOW_DISSECTOR_KEY_ENC_IPV4_ADDRS) | \
-	 BIT(FLOW_DISSECTOR_KEY_ENC_IPV6_ADDRS) | \
-	 BIT(FLOW_DISSECTOR_KEY_ENC_CONTROL) | \
-	 BIT(FLOW_DISSECTOR_KEY_ENC_PORTS) | \
-	 BIT(FLOW_DISSECTOR_KEY_ENC_OPTS) | \
-	 BIT(FLOW_DISSECTOR_KEY_ENC_IP) | \
-	 BIT(FLOW_DISSECTOR_KEY_MPLS) | \
-	 BIT(FLOW_DISSECTOR_KEY_CT) | \
-	 BIT(FLOW_DISSECTOR_KEY_META) | \
-	 BIT(FLOW_DISSECTOR_KEY_IP))
+	(BIT_ULL(FLOW_DISSECTOR_KEY_CONTROL) | \
+	 BIT_ULL(FLOW_DISSECTOR_KEY_BASIC) | \
+	 BIT_ULL(FLOW_DISSECTOR_KEY_IPV4_ADDRS) | \
+	 BIT_ULL(FLOW_DISSECTOR_KEY_IPV6_ADDRS) | \
+	 BIT_ULL(FLOW_DISSECTOR_KEY_TCP) | \
+	 BIT_ULL(FLOW_DISSECTOR_KEY_PORTS) | \
+	 BIT_ULL(FLOW_DISSECTOR_KEY_ETH_ADDRS) | \
+	 BIT_ULL(FLOW_DISSECTOR_KEY_VLAN) | \
+	 BIT_ULL(FLOW_DISSECTOR_KEY_CVLAN) | \
+	 BIT_ULL(FLOW_DISSECTOR_KEY_ENC_KEYID) | \
+	 BIT_ULL(FLOW_DISSECTOR_KEY_ENC_IPV4_ADDRS) | \
+	 BIT_ULL(FLOW_DISSECTOR_KEY_ENC_IPV6_ADDRS) | \
+	 BIT_ULL(FLOW_DISSECTOR_KEY_ENC_CONTROL) | \
+	 BIT_ULL(FLOW_DISSECTOR_KEY_ENC_PORTS) | \
+	 BIT_ULL(FLOW_DISSECTOR_KEY_ENC_OPTS) | \
+	 BIT_ULL(FLOW_DISSECTOR_KEY_ENC_IP) | \
+	 BIT_ULL(FLOW_DISSECTOR_KEY_MPLS) | \
+	 BIT_ULL(FLOW_DISSECTOR_KEY_CT) | \
+	 BIT_ULL(FLOW_DISSECTOR_KEY_META) | \
+	 BIT_ULL(FLOW_DISSECTOR_KEY_IP))
 
 #define NFP_FLOWER_WHITELIST_TUN_DISSECTOR \
-	(BIT(FLOW_DISSECTOR_KEY_ENC_CONTROL) | \
-	 BIT(FLOW_DISSECTOR_KEY_ENC_KEYID) | \
-	 BIT(FLOW_DISSECTOR_KEY_ENC_IPV4_ADDRS) | \
-	 BIT(FLOW_DISSECTOR_KEY_ENC_IPV6_ADDRS) | \
-	 BIT(FLOW_DISSECTOR_KEY_ENC_OPTS) | \
-	 BIT(FLOW_DISSECTOR_KEY_ENC_PORTS) | \
-	 BIT(FLOW_DISSECTOR_KEY_ENC_IP))
+	(BIT_ULL(FLOW_DISSECTOR_KEY_ENC_CONTROL) | \
+	 BIT_ULL(FLOW_DISSECTOR_KEY_ENC_KEYID) | \
+	 BIT_ULL(FLOW_DISSECTOR_KEY_ENC_IPV4_ADDRS) | \
+	 BIT_ULL(FLOW_DISSECTOR_KEY_ENC_IPV6_ADDRS) | \
+	 BIT_ULL(FLOW_DISSECTOR_KEY_ENC_OPTS) | \
+	 BIT_ULL(FLOW_DISSECTOR_KEY_ENC_PORTS) | \
+	 BIT_ULL(FLOW_DISSECTOR_KEY_ENC_IP))
 
 #define NFP_FLOWER_WHITELIST_TUN_DISSECTOR_R \
-	(BIT(FLOW_DISSECTOR_KEY_ENC_CONTROL) | \
-	 BIT(FLOW_DISSECTOR_KEY_ENC_IPV4_ADDRS))
+	(BIT_ULL(FLOW_DISSECTOR_KEY_ENC_CONTROL) | \
+	 BIT_ULL(FLOW_DISSECTOR_KEY_ENC_IPV4_ADDRS))
 
 #define NFP_FLOWER_WHITELIST_TUN_DISSECTOR_V6_R \
-	(BIT(FLOW_DISSECTOR_KEY_ENC_CONTROL) | \
-	 BIT(FLOW_DISSECTOR_KEY_ENC_IPV6_ADDRS))
+	(BIT_ULL(FLOW_DISSECTOR_KEY_ENC_CONTROL) | \
+	 BIT_ULL(FLOW_DISSECTOR_KEY_ENC_IPV6_ADDRS))
 
 #define NFP_FLOWER_MERGE_FIELDS \
 	(NFP_FLOWER_LAYER_PORT | \
@@ -359,7 +359,7 @@ nfp_flower_calculate_key_layers(struct nfp_app *app,
 			flow_rule_match_enc_opts(rule, &enc_op);
 
 		if (!flow_rule_match_key(rule, FLOW_DISSECTOR_KEY_ENC_PORTS)) {
-			/* check if GRE, which has no enc_ports */
+			/* Check if GRE, which has no enc_ports */
 			if (!netif_is_gretap(netdev) && !netif_is_ip6gretap(netdev)) {
 				NL_SET_ERR_MSG_MOD(extack, "unsupported offload: an exact match on L4 destination port is required for non-GRE tunnels");
 				return -EOPNOTSUPP;
@@ -373,10 +373,10 @@ nfp_flower_calculate_key_layers(struct nfp_app *app,
 			if (ipv6_tun) {
 				key_layer_two |= NFP_FLOWER_LAYER2_TUN_IPV6;
 				key_size +=
-					sizeof(struct nfp_flower_ipv6_udp_tun);
+					sizeof(struct nfp_flower_ipv6_gre_tun);
 			} else {
 				key_size +=
-					sizeof(struct nfp_flower_ipv4_udp_tun);
+					sizeof(struct nfp_flower_ipv4_gre_tun);
 			}
 
 			if (enc_op.key) {
@@ -1016,7 +1016,7 @@ int nfp_flower_merge_offloaded_flows(struct nfp_app *app,
 	    nfp_flower_is_merge_flow(sub_flow2))
 		return -EINVAL;
 
-	/* check if the two flows are already merged */
+	/* Check if the two flows are already merged */
 	parent_ctx = (u64)(be32_to_cpu(sub_flow1->meta.host_ctx_id)) << 32;
 	parent_ctx |= (u64)(be32_to_cpu(sub_flow2->meta.host_ctx_id));
 	if (rhashtable_lookup_fast(&priv->merge_table,
@@ -1301,9 +1301,14 @@ static bool offload_pre_check(struct flow_cls_offload *flow)
 {
 	struct flow_rule *rule = flow_cls_offload_flow_rule(flow);
 	struct flow_dissector *dissector = rule->match.dissector;
+	struct flow_match_ct ct;
 
-	if (dissector->used_keys & BIT(FLOW_DISSECTOR_KEY_CT))
-		return false;
+	if (dissector->used_keys & BIT_ULL(FLOW_DISSECTOR_KEY_CT)) {
+		flow_rule_match_ct(rule, &ct);
+		/* Allow special case where CT match is all 0 */
+		if (memchr_inv(ct.key, 0, sizeof(*ct.key)))
+			return false;
+	}
 
 	if (flow->common.chain_index)
 		return false;
@@ -1339,7 +1344,7 @@ nfp_flower_add_offload(struct nfp_app *app, struct net_device *netdev,
 		port = nfp_port_from_netdev(netdev);
 
 	if (is_pre_ct_flow(flow))
-		return nfp_fl_ct_handle_pre_ct(priv, netdev, flow, extack);
+		return nfp_fl_ct_handle_pre_ct(priv, netdev, flow, extack, NULL);
 
 	if (is_post_ct_flow(flow))
 		return nfp_fl_ct_handle_post_ct(priv, netdev, flow, extack);

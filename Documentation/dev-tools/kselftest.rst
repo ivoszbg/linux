@@ -36,6 +36,7 @@ Running the selftests (hotplug tests are run in limited mode)
 
 To build the tests::
 
+  $ make headers
   $ make -C tools/testing/selftests
 
 To run the tests::
@@ -168,6 +169,28 @@ the `-t` option for specific single tests. Either can be used multiple times::
 
 For other features see the script usage output, seen with the `-h` option.
 
+Timeout for selftests
+=====================
+
+Selftests are designed to be quick and so a default timeout is used of 45
+seconds for each test. Tests can override the default timeout by adding
+a settings file in their directory and set a timeout variable there to the
+configured a desired upper timeout for the test. Only a few tests override
+the timeout with a value higher than 45 seconds, selftests strives to keep
+it that way. Timeouts in selftests are not considered fatal because the
+system under which a test runs may change and this can also modify the
+expected time it takes to run a test. If you have control over the systems
+which will run the tests you can configure a test runner on those systems to
+use a greater or lower timeout on the command line as with the `-o` or
+the `--override-timeout` argument. For example to use 165 seconds instead
+one would use:
+
+   $ ./run_kselftest.sh --override-timeout 165
+
+You can look at the TAP output to see if you ran into the timeout. Test
+runners which know a test must run under a specific time can then optionally
+treat these timeouts then as fatal.
+
 Packaging selftests
 ===================
 
@@ -208,6 +231,14 @@ In general, the rules for selftests are
 Contributing new tests (details)
 ================================
 
+ * In your Makefile, use facilities from lib.mk by including it instead of
+   reinventing the wheel. Specify flags and binaries generation flags on
+   need basis before including lib.mk. ::
+
+    CFLAGS = $(KHDR_INCLUDES)
+    TEST_GEN_PROGS := close_range_test
+    include ../lib.mk
+
  * Use TEST_GEN_XXX if such binaries or files are generated during
    compiling.
 
@@ -230,12 +261,29 @@ Contributing new tests (details)
  * First use the headers inside the kernel source and/or git repo, and then the
    system headers.  Headers for the kernel release as opposed to headers
    installed by the distro on the system should be the primary focus to be able
-   to find regressions.
+   to find regressions. Use KHDR_INCLUDES in Makefile to include headers from
+   the kernel source.
 
  * If a test needs specific kernel config options enabled, add a config file in
    the test directory to enable them.
 
    e.g: tools/testing/selftests/android/config
+
+ * Create a .gitignore file inside test directory and add all generated objects
+   in it.
+
+ * Add new test name in TARGETS in selftests/Makefile::
+
+    TARGETS += android
+
+ * All changes should pass::
+
+    kselftest-{all,install,clean,gen_tar}
+    kselftest-{all,install,clean,gen_tar} O=abo_path
+    kselftest-{all,install,clean,gen_tar} O=rel_path
+    make -C tools/testing/selftests {all,install,clean,gen_tar}
+    make -C tools/testing/selftests {all,install,clean,gen_tar} O=abs_path
+    make -C tools/testing/selftests {all,install,clean,gen_tar} O=rel_path
 
 Test Module
 ===========
@@ -249,6 +297,14 @@ assist writing kernel modules that are for use with kselftest:
 
 - ``tools/testing/selftests/kselftest_module.h``
 - ``tools/testing/selftests/kselftest/module.sh``
+
+Note that test modules should taint the kernel with TAINT_TEST. This will
+happen automatically for modules which are in the ``tools/testing/``
+directory, or for modules which use the ``kselftest_module.h`` header above.
+Otherwise, you'll need to add ``MODULE_INFO(test, "Y")`` to your module
+source. selftests which do not load modules typically should not taint the
+kernel, but in cases where a non-test module is loaded, TEST_TAINT can be
+applied from userspace by writing to ``/proc/sys/kernel/tainted``.
 
 How to use
 ----------
@@ -287,7 +343,7 @@ A bare bones test module might look like this:
 
    #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
-   #include "../tools/testing/selftests/kselftest/module.h"
+   #include "../tools/testing/selftests/kselftest_module.h"
 
    KSTM_MODULE_GLOBALS();
 
@@ -308,6 +364,7 @@ A bare bones test module might look like this:
    KSTM_MODULE_LOADERS(test_foo);
    MODULE_AUTHOR("John Developer <jd@fooman.org>");
    MODULE_LICENSE("GPL");
+   MODULE_INFO(test, "Y");
 
 Example test script
 -------------------

@@ -14,7 +14,15 @@
 #include <linux/scatterlist.h>
 #include <linux/instrumented.h>
 
-#define PIPE_PARANOIA /* for now */
+/* covers ubuf and kbuf alike */
+#define iterate_buf(i, n, base, len, off, __p, STEP) {		\
+	size_t __maybe_unused off = 0;				\
+	len = n;						\
+	base = __p + i->iov_offset;				\
+	len -= (STEP);						\
+	i->iov_offset += len;					\
+	n = len;						\
+}
 
 /* covers iovec and kvec alike */
 #define iterate_iovec(i, n, base, len, off, __p, STEP) {	\
@@ -110,14 +118,19 @@ __out:								\
 	if (unlikely(i->count < n))				\
 		n = i->count;					\
 	if (likely(n)) {					\
-		if (likely(iter_is_iovec(i))) {			\
-			const struct iovec *iov = i->iov;	\
+		if (likely(iter_is_ubuf(i))) {			\
+			void __user *base;			\
+			size_t len;				\
+			iterate_buf(i, n, base, len, off,	\
+						i->ubuf, (I)) 	\
+		} else if (likely(iter_is_iovec(i))) {		\
+			const struct iovec *iov = iter_iov(i);	\
 			void __user *base;			\
 			size_t len;				\
 			iterate_iovec(i, n, base, len, off,	\
 						iov, (I))	\
-			i->nr_segs -= iov - i->iov;		\
-			i->iov = iov;				\
+			i->nr_segs -= iov - iter_iov(i);	\
+			i->__iov = iov;				\
 		} else if (iov_iter_is_bvec(i)) {		\
 			const struct bio_vec *bvec = i->bvec;	\
 			void *base;				\
@@ -157,275 +170,30 @@ static int copyout(void __user *to, const void *from, size_t n)
 	return n;
 }
 
+static int copyout_nofault(void __user *to, const void *from, size_t n)
+{
+	long res;
+
+	if (should_fail_usercopy())
+		return n;
+
+	res = copy_to_user_nofault(to, from, n);
+
+	return res < 0 ? n : res;
+}
+
 static int copyin(void *to, const void __user *from, size_t n)
 {
+	size_t res = n;
+
 	if (should_fail_usercopy())
 		return n;
 	if (access_ok(from, n)) {
-		instrument_copy_from_user(to, from, n);
-		n = raw_copy_from_user(to, from, n);
+		instrument_copy_from_user_before(to, from, n);
+		res = raw_copy_from_user(to, from, n);
+		instrument_copy_from_user_after(to, from, n, res);
 	}
-	return n;
-}
-
-static size_t copy_page_to_iter_iovec(struct page *page, size_t offset, size_t bytes,
-			 struct iov_iter *i)
-{
-	size_t skip, copy, left, wanted;
-	const struct iovec *iov;
-	char __user *buf;
-	void *kaddr, *from;
-
-	if (unlikely(bytes > i->count))
-		bytes = i->count;
-
-	if (unlikely(!bytes))
-		return 0;
-
-	might_fault();
-	wanted = bytes;
-	iov = i->iov;
-	skip = i->iov_offset;
-	buf = iov->iov_base + skip;
-	copy = min(bytes, iov->iov_len - skip);
-
-	if (IS_ENABLED(CONFIG_HIGHMEM) && !fault_in_writeable(buf, copy)) {
-		kaddr = kmap_atomic(page);
-		from = kaddr + offset;
-
-		/* first chunk, usually the only one */
-		left = copyout(buf, from, copy);
-		copy -= left;
-		skip += copy;
-		from += copy;
-		bytes -= copy;
-
-		while (unlikely(!left && bytes)) {
-			iov++;
-			buf = iov->iov_base;
-			copy = min(bytes, iov->iov_len);
-			left = copyout(buf, from, copy);
-			copy -= left;
-			skip = copy;
-			from += copy;
-			bytes -= copy;
-		}
-		if (likely(!bytes)) {
-			kunmap_atomic(kaddr);
-			goto done;
-		}
-		offset = from - kaddr;
-		buf += copy;
-		kunmap_atomic(kaddr);
-		copy = min(bytes, iov->iov_len - skip);
-	}
-	/* Too bad - revert to non-atomic kmap */
-
-	kaddr = kmap(page);
-	from = kaddr + offset;
-	left = copyout(buf, from, copy);
-	copy -= left;
-	skip += copy;
-	from += copy;
-	bytes -= copy;
-	while (unlikely(!left && bytes)) {
-		iov++;
-		buf = iov->iov_base;
-		copy = min(bytes, iov->iov_len);
-		left = copyout(buf, from, copy);
-		copy -= left;
-		skip = copy;
-		from += copy;
-		bytes -= copy;
-	}
-	kunmap(page);
-
-done:
-	if (skip == iov->iov_len) {
-		iov++;
-		skip = 0;
-	}
-	i->count -= wanted - bytes;
-	i->nr_segs -= iov - i->iov;
-	i->iov = iov;
-	i->iov_offset = skip;
-	return wanted - bytes;
-}
-
-static size_t copy_page_from_iter_iovec(struct page *page, size_t offset, size_t bytes,
-			 struct iov_iter *i)
-{
-	size_t skip, copy, left, wanted;
-	const struct iovec *iov;
-	char __user *buf;
-	void *kaddr, *to;
-
-	if (unlikely(bytes > i->count))
-		bytes = i->count;
-
-	if (unlikely(!bytes))
-		return 0;
-
-	might_fault();
-	wanted = bytes;
-	iov = i->iov;
-	skip = i->iov_offset;
-	buf = iov->iov_base + skip;
-	copy = min(bytes, iov->iov_len - skip);
-
-	if (IS_ENABLED(CONFIG_HIGHMEM) && !fault_in_readable(buf, copy)) {
-		kaddr = kmap_atomic(page);
-		to = kaddr + offset;
-
-		/* first chunk, usually the only one */
-		left = copyin(to, buf, copy);
-		copy -= left;
-		skip += copy;
-		to += copy;
-		bytes -= copy;
-
-		while (unlikely(!left && bytes)) {
-			iov++;
-			buf = iov->iov_base;
-			copy = min(bytes, iov->iov_len);
-			left = copyin(to, buf, copy);
-			copy -= left;
-			skip = copy;
-			to += copy;
-			bytes -= copy;
-		}
-		if (likely(!bytes)) {
-			kunmap_atomic(kaddr);
-			goto done;
-		}
-		offset = to - kaddr;
-		buf += copy;
-		kunmap_atomic(kaddr);
-		copy = min(bytes, iov->iov_len - skip);
-	}
-	/* Too bad - revert to non-atomic kmap */
-
-	kaddr = kmap(page);
-	to = kaddr + offset;
-	left = copyin(to, buf, copy);
-	copy -= left;
-	skip += copy;
-	to += copy;
-	bytes -= copy;
-	while (unlikely(!left && bytes)) {
-		iov++;
-		buf = iov->iov_base;
-		copy = min(bytes, iov->iov_len);
-		left = copyin(to, buf, copy);
-		copy -= left;
-		skip = copy;
-		to += copy;
-		bytes -= copy;
-	}
-	kunmap(page);
-
-done:
-	if (skip == iov->iov_len) {
-		iov++;
-		skip = 0;
-	}
-	i->count -= wanted - bytes;
-	i->nr_segs -= iov - i->iov;
-	i->iov = iov;
-	i->iov_offset = skip;
-	return wanted - bytes;
-}
-
-#ifdef PIPE_PARANOIA
-static bool sanity(const struct iov_iter *i)
-{
-	struct pipe_inode_info *pipe = i->pipe;
-	unsigned int p_head = pipe->head;
-	unsigned int p_tail = pipe->tail;
-	unsigned int p_mask = pipe->ring_size - 1;
-	unsigned int p_occupancy = pipe_occupancy(p_head, p_tail);
-	unsigned int i_head = i->head;
-	unsigned int idx;
-
-	if (i->iov_offset) {
-		struct pipe_buffer *p;
-		if (unlikely(p_occupancy == 0))
-			goto Bad;	// pipe must be non-empty
-		if (unlikely(i_head != p_head - 1))
-			goto Bad;	// must be at the last buffer...
-
-		p = &pipe->bufs[i_head & p_mask];
-		if (unlikely(p->offset + p->len != i->iov_offset))
-			goto Bad;	// ... at the end of segment
-	} else {
-		if (i_head != p_head)
-			goto Bad;	// must be right after the last buffer
-	}
-	return true;
-Bad:
-	printk(KERN_ERR "idx = %d, offset = %zd\n", i_head, i->iov_offset);
-	printk(KERN_ERR "head = %d, tail = %d, buffers = %d\n",
-			p_head, p_tail, pipe->ring_size);
-	for (idx = 0; idx < pipe->ring_size; idx++)
-		printk(KERN_ERR "[%p %p %d %d]\n",
-			pipe->bufs[idx].ops,
-			pipe->bufs[idx].page,
-			pipe->bufs[idx].offset,
-			pipe->bufs[idx].len);
-	WARN_ON(1);
-	return false;
-}
-#else
-#define sanity(i) true
-#endif
-
-static size_t copy_page_to_iter_pipe(struct page *page, size_t offset, size_t bytes,
-			 struct iov_iter *i)
-{
-	struct pipe_inode_info *pipe = i->pipe;
-	struct pipe_buffer *buf;
-	unsigned int p_tail = pipe->tail;
-	unsigned int p_mask = pipe->ring_size - 1;
-	unsigned int i_head = i->head;
-	size_t off;
-
-	if (unlikely(bytes > i->count))
-		bytes = i->count;
-
-	if (unlikely(!bytes))
-		return 0;
-
-	if (!sanity(i))
-		return 0;
-
-	off = i->iov_offset;
-	buf = &pipe->bufs[i_head & p_mask];
-	if (off) {
-		if (offset == off && buf->page == page) {
-			/* merge with the last one */
-			buf->len += bytes;
-			i->iov_offset += bytes;
-			goto out;
-		}
-		i_head++;
-		buf = &pipe->bufs[i_head & p_mask];
-	}
-	if (pipe_full(i_head, p_tail, pipe->max_usage))
-		return 0;
-
-	buf->ops = &page_cache_pipe_buf_ops;
-	buf->flags = 0;
-	get_page(page);
-	buf->page = page;
-	buf->offset = offset;
-	buf->len = bytes;
-
-	pipe->head = i_head + 1;
-	i->iov_offset = offset + bytes;
-	i->head = i_head;
-out:
-	i->count -= bytes;
-	return bytes;
+	return res;
 }
 
 /*
@@ -443,13 +211,17 @@ out:
  */
 size_t fault_in_iov_iter_readable(const struct iov_iter *i, size_t size)
 {
-	if (iter_is_iovec(i)) {
+	if (iter_is_ubuf(i)) {
+		size_t n = min(size, iov_iter_count(i));
+		n -= fault_in_readable(i->ubuf + i->iov_offset, n);
+		return size - n;
+	} else if (iter_is_iovec(i)) {
 		size_t count = min(size, iov_iter_count(i));
 		const struct iovec *p;
 		size_t skip;
 
 		size -= count;
-		for (p = i->iov, skip = i->iov_offset; count; p++, skip = 0) {
+		for (p = iter_iov(i), skip = i->iov_offset; count; p++, skip = 0) {
 			size_t len = min(count, p->iov_len - skip);
 			size_t ret;
 
@@ -482,13 +254,17 @@ EXPORT_SYMBOL(fault_in_iov_iter_readable);
  */
 size_t fault_in_iov_iter_writeable(const struct iov_iter *i, size_t size)
 {
-	if (iter_is_iovec(i)) {
+	if (iter_is_ubuf(i)) {
+		size_t n = min(size, iov_iter_count(i));
+		n -= fault_in_safe_writeable(i->ubuf + i->iov_offset, n);
+		return size - n;
+	} else if (iter_is_iovec(i)) {
 		size_t count = min(size, iov_iter_count(i));
 		const struct iovec *p;
 		size_t skip;
 
 		size -= count;
-		for (p = i->iov, skip = i->iov_offset; count; p++, skip = 0) {
+		for (p = iter_iov(i), skip = i->iov_offset; count; p++, skip = 0) {
 			size_t len = min(count, p->iov_len - skip);
 			size_t ret;
 
@@ -512,113 +288,17 @@ void iov_iter_init(struct iov_iter *i, unsigned int direction,
 	WARN_ON(direction & ~(READ | WRITE));
 	*i = (struct iov_iter) {
 		.iter_type = ITER_IOVEC,
+		.copy_mc = false,
 		.nofault = false,
+		.user_backed = true,
 		.data_source = direction,
-		.iov = iov,
+		.__iov = iov,
 		.nr_segs = nr_segs,
 		.iov_offset = 0,
 		.count = count
 	};
 }
 EXPORT_SYMBOL(iov_iter_init);
-
-static inline bool allocated(struct pipe_buffer *buf)
-{
-	return buf->ops == &default_pipe_buf_ops;
-}
-
-static inline void data_start(const struct iov_iter *i,
-			      unsigned int *iter_headp, size_t *offp)
-{
-	unsigned int p_mask = i->pipe->ring_size - 1;
-	unsigned int iter_head = i->head;
-	size_t off = i->iov_offset;
-
-	if (off && (!allocated(&i->pipe->bufs[iter_head & p_mask]) ||
-		    off == PAGE_SIZE)) {
-		iter_head++;
-		off = 0;
-	}
-	*iter_headp = iter_head;
-	*offp = off;
-}
-
-static size_t push_pipe(struct iov_iter *i, size_t size,
-			int *iter_headp, size_t *offp)
-{
-	struct pipe_inode_info *pipe = i->pipe;
-	unsigned int p_tail = pipe->tail;
-	unsigned int p_mask = pipe->ring_size - 1;
-	unsigned int iter_head;
-	size_t off;
-	ssize_t left;
-
-	if (unlikely(size > i->count))
-		size = i->count;
-	if (unlikely(!size))
-		return 0;
-
-	left = size;
-	data_start(i, &iter_head, &off);
-	*iter_headp = iter_head;
-	*offp = off;
-	if (off) {
-		left -= PAGE_SIZE - off;
-		if (left <= 0) {
-			pipe->bufs[iter_head & p_mask].len += size;
-			return size;
-		}
-		pipe->bufs[iter_head & p_mask].len = PAGE_SIZE;
-		iter_head++;
-	}
-	while (!pipe_full(iter_head, p_tail, pipe->max_usage)) {
-		struct pipe_buffer *buf = &pipe->bufs[iter_head & p_mask];
-		struct page *page = alloc_page(GFP_USER);
-		if (!page)
-			break;
-
-		buf->ops = &default_pipe_buf_ops;
-		buf->flags = 0;
-		buf->page = page;
-		buf->offset = 0;
-		buf->len = min_t(ssize_t, left, PAGE_SIZE);
-		left -= buf->len;
-		iter_head++;
-		pipe->head = iter_head;
-
-		if (left == 0)
-			return size;
-	}
-	return size - left;
-}
-
-static size_t copy_pipe_to_iter(const void *addr, size_t bytes,
-				struct iov_iter *i)
-{
-	struct pipe_inode_info *pipe = i->pipe;
-	unsigned int p_mask = pipe->ring_size - 1;
-	unsigned int i_head;
-	size_t n, off;
-
-	if (!sanity(i))
-		return 0;
-
-	bytes = n = push_pipe(i, bytes, &i_head, &off);
-	if (unlikely(!n))
-		return 0;
-	do {
-		size_t chunk = min_t(size_t, n, PAGE_SIZE - off);
-		memcpy_to_page(pipe->bufs[i_head & p_mask].page, off, addr, chunk);
-		i->head = i_head;
-		i->iov_offset = off + chunk;
-		n -= chunk;
-		addr += chunk;
-		off = 0;
-		i_head++;
-	} while (n);
-	i->count -= bytes;
-	return bytes;
-}
 
 static __wsum csum_and_memcpy(void *to, const void *from, size_t len,
 			      __wsum sum, size_t off)
@@ -627,42 +307,11 @@ static __wsum csum_and_memcpy(void *to, const void *from, size_t len,
 	return csum_block_add(sum, next, off);
 }
 
-static size_t csum_and_copy_to_pipe_iter(const void *addr, size_t bytes,
-					 struct iov_iter *i, __wsum *sump)
-{
-	struct pipe_inode_info *pipe = i->pipe;
-	unsigned int p_mask = pipe->ring_size - 1;
-	__wsum sum = *sump;
-	size_t off = 0;
-	unsigned int i_head;
-	size_t r;
-
-	if (!sanity(i))
-		return 0;
-
-	bytes = push_pipe(i, bytes, &i_head, &r);
-	while (bytes) {
-		size_t chunk = min_t(size_t, bytes, PAGE_SIZE - r);
-		char *p = kmap_local_page(pipe->bufs[i_head & p_mask].page);
-		sum = csum_and_memcpy(p + r, addr + off, chunk, sum, off);
-		kunmap_local(p);
-		i->head = i_head;
-		i->iov_offset = r + chunk;
-		bytes -= chunk;
-		off += chunk;
-		r = 0;
-		i_head++;
-	}
-	*sump = sum;
-	i->count -= off;
-	return off;
-}
-
 size_t _copy_to_iter(const void *addr, size_t bytes, struct iov_iter *i)
 {
-	if (unlikely(iov_iter_is_pipe(i)))
-		return copy_pipe_to_iter(addr, bytes, i);
-	if (iter_is_iovec(i))
+	if (WARN_ON_ONCE(i->data_source))
+		return 0;
+	if (user_backed_iter(i))
 		might_fault();
 	iterate_and_advance(i, bytes, base, len, off,
 		copyout(base, addr + off, len),
@@ -681,38 +330,6 @@ static int copyout_mc(void __user *to, const void *from, size_t n)
 		n = copy_mc_to_user((__force void *) to, from, n);
 	}
 	return n;
-}
-
-static size_t copy_mc_pipe_to_iter(const void *addr, size_t bytes,
-				struct iov_iter *i)
-{
-	struct pipe_inode_info *pipe = i->pipe;
-	unsigned int p_mask = pipe->ring_size - 1;
-	unsigned int i_head;
-	size_t n, off, xfer = 0;
-
-	if (!sanity(i))
-		return 0;
-
-	n = push_pipe(i, bytes, &i_head, &off);
-	while (n) {
-		size_t chunk = min_t(size_t, n, PAGE_SIZE - off);
-		char *p = kmap_local_page(pipe->bufs[i_head & p_mask].page);
-		unsigned long rem;
-		rem = copy_mc_to_kernel(p + off, addr + xfer, chunk);
-		chunk -= rem;
-		kunmap_local(p);
-		i->head = i_head;
-		i->iov_offset = off + chunk;
-		xfer += chunk;
-		if (rem)
-			break;
-		n -= chunk;
-		off = 0;
-		i_head++;
-	}
-	i->count -= xfer;
-	return xfer;
 }
 
 /**
@@ -734,17 +351,16 @@ static size_t copy_mc_pipe_to_iter(const void *addr, size_t bytes,
  *   alignment and poison alignment assumptions to avoid re-triggering
  *   hardware exceptions.
  *
- * * ITER_KVEC, ITER_PIPE, and ITER_BVEC can return short copies.
- *   Compare to copy_to_iter() where only ITER_IOVEC attempts might return
- *   a short copy.
+ * * ITER_KVEC and ITER_BVEC can return short copies.  Compare to
+ *   copy_to_iter() where only ITER_IOVEC attempts might return a short copy.
  *
  * Return: number of bytes copied (may be %0)
  */
 size_t _copy_mc_to_iter(const void *addr, size_t bytes, struct iov_iter *i)
 {
-	if (unlikely(iov_iter_is_pipe(i)))
-		return copy_mc_pipe_to_iter(addr, bytes, i);
-	if (iter_is_iovec(i))
+	if (WARN_ON_ONCE(i->data_source))
+		return 0;
+	if (user_backed_iter(i))
 		might_fault();
 	__iterate_and_advance(i, bytes, base, len, off,
 		copyout_mc(base, addr + off, len),
@@ -756,17 +372,24 @@ size_t _copy_mc_to_iter(const void *addr, size_t bytes, struct iov_iter *i)
 EXPORT_SYMBOL_GPL(_copy_mc_to_iter);
 #endif /* CONFIG_ARCH_HAS_COPY_MC */
 
+static void *memcpy_from_iter(struct iov_iter *i, void *to, const void *from,
+				 size_t size)
+{
+	if (iov_iter_is_copy_mc(i))
+		return (void *)copy_mc_to_kernel(to, from, size);
+	return memcpy(to, from, size);
+}
+
 size_t _copy_from_iter(void *addr, size_t bytes, struct iov_iter *i)
 {
-	if (unlikely(iov_iter_is_pipe(i))) {
-		WARN_ON(1);
+	if (WARN_ON_ONCE(!i->data_source))
 		return 0;
-	}
-	if (iter_is_iovec(i))
+
+	if (user_backed_iter(i))
 		might_fault();
 	iterate_and_advance(i, bytes, base, len, off,
 		copyin(addr + off, base, len),
-		memcpy(addr + off, base, len)
+		memcpy_from_iter(i, addr + off, base, len)
 	)
 
 	return bytes;
@@ -775,10 +398,9 @@ EXPORT_SYMBOL(_copy_from_iter);
 
 size_t _copy_from_iter_nocache(void *addr, size_t bytes, struct iov_iter *i)
 {
-	if (unlikely(iov_iter_is_pipe(i))) {
-		WARN_ON(1);
+	if (WARN_ON_ONCE(!i->data_source))
 		return 0;
-	}
+
 	iterate_and_advance(i, bytes, base, len, off,
 		__copy_from_user_inatomic_nocache(addr + off, base, len),
 		memcpy(addr + off, base, len)
@@ -807,10 +429,9 @@ EXPORT_SYMBOL(_copy_from_iter_nocache);
  */
 size_t _copy_from_iter_flushcache(void *addr, size_t bytes, struct iov_iter *i)
 {
-	if (unlikely(iov_iter_is_pipe(i))) {
-		WARN_ON(1);
+	if (WARN_ON_ONCE(!i->data_source))
 		return 0;
-	}
+
 	iterate_and_advance(i, bytes, base, len, off,
 		__copy_from_user_flushcache(addr + off, base, len),
 		memcpy_flushcache(addr + off, base, len)
@@ -839,46 +460,26 @@ static inline bool page_copy_sane(struct page *page, size_t offset, size_t n)
 	head = compound_head(page);
 	v += (page - head) << PAGE_SHIFT;
 
-	if (likely(n <= v && v <= (page_size(head))))
-		return true;
-	WARN_ON(1);
-	return false;
-}
-
-static size_t __copy_page_to_iter(struct page *page, size_t offset, size_t bytes,
-			 struct iov_iter *i)
-{
-	if (likely(iter_is_iovec(i)))
-		return copy_page_to_iter_iovec(page, offset, bytes, i);
-	if (iov_iter_is_bvec(i) || iov_iter_is_kvec(i) || iov_iter_is_xarray(i)) {
-		void *kaddr = kmap_local_page(page);
-		size_t wanted = _copy_to_iter(kaddr + offset, bytes, i);
-		kunmap_local(kaddr);
-		return wanted;
-	}
-	if (iov_iter_is_pipe(i))
-		return copy_page_to_iter_pipe(page, offset, bytes, i);
-	if (unlikely(iov_iter_is_discard(i))) {
-		if (unlikely(i->count < bytes))
-			bytes = i->count;
-		i->count -= bytes;
-		return bytes;
-	}
-	WARN_ON(1);
-	return 0;
+	if (WARN_ON(n > v || v > page_size(head)))
+		return false;
+	return true;
 }
 
 size_t copy_page_to_iter(struct page *page, size_t offset, size_t bytes,
 			 struct iov_iter *i)
 {
 	size_t res = 0;
-	if (unlikely(!page_copy_sane(page, offset, bytes)))
+	if (!page_copy_sane(page, offset, bytes))
+		return 0;
+	if (WARN_ON_ONCE(i->data_source))
 		return 0;
 	page += offset / PAGE_SIZE; // first subpage
 	offset %= PAGE_SIZE;
 	while (1) {
-		size_t n = __copy_page_to_iter(page, offset,
-				min(bytes, (size_t)PAGE_SIZE - offset), i);
+		void *kaddr = kmap_local_page(page);
+		size_t n = min(bytes, (size_t)PAGE_SIZE - offset);
+		n = _copy_to_iter(kaddr + offset, n, i);
+		kunmap_local(kaddr);
 		res += n;
 		bytes -= n;
 		if (!bytes || !n)
@@ -893,57 +494,69 @@ size_t copy_page_to_iter(struct page *page, size_t offset, size_t bytes,
 }
 EXPORT_SYMBOL(copy_page_to_iter);
 
+size_t copy_page_to_iter_nofault(struct page *page, unsigned offset, size_t bytes,
+				 struct iov_iter *i)
+{
+	size_t res = 0;
+
+	if (!page_copy_sane(page, offset, bytes))
+		return 0;
+	if (WARN_ON_ONCE(i->data_source))
+		return 0;
+	page += offset / PAGE_SIZE; // first subpage
+	offset %= PAGE_SIZE;
+	while (1) {
+		void *kaddr = kmap_local_page(page);
+		size_t n = min(bytes, (size_t)PAGE_SIZE - offset);
+
+		iterate_and_advance(i, n, base, len, off,
+			copyout_nofault(base, kaddr + offset + off, len),
+			memcpy(base, kaddr + offset + off, len)
+		)
+		kunmap_local(kaddr);
+		res += n;
+		bytes -= n;
+		if (!bytes || !n)
+			break;
+		offset += n;
+		if (offset == PAGE_SIZE) {
+			page++;
+			offset = 0;
+		}
+	}
+	return res;
+}
+EXPORT_SYMBOL(copy_page_to_iter_nofault);
+
 size_t copy_page_from_iter(struct page *page, size_t offset, size_t bytes,
 			 struct iov_iter *i)
 {
-	if (unlikely(!page_copy_sane(page, offset, bytes)))
+	size_t res = 0;
+	if (!page_copy_sane(page, offset, bytes))
 		return 0;
-	if (likely(iter_is_iovec(i)))
-		return copy_page_from_iter_iovec(page, offset, bytes, i);
-	if (iov_iter_is_bvec(i) || iov_iter_is_kvec(i) || iov_iter_is_xarray(i)) {
+	page += offset / PAGE_SIZE; // first subpage
+	offset %= PAGE_SIZE;
+	while (1) {
 		void *kaddr = kmap_local_page(page);
-		size_t wanted = _copy_from_iter(kaddr + offset, bytes, i);
+		size_t n = min(bytes, (size_t)PAGE_SIZE - offset);
+		n = _copy_from_iter(kaddr + offset, n, i);
 		kunmap_local(kaddr);
-		return wanted;
+		res += n;
+		bytes -= n;
+		if (!bytes || !n)
+			break;
+		offset += n;
+		if (offset == PAGE_SIZE) {
+			page++;
+			offset = 0;
+		}
 	}
-	WARN_ON(1);
-	return 0;
+	return res;
 }
 EXPORT_SYMBOL(copy_page_from_iter);
 
-static size_t pipe_zero(size_t bytes, struct iov_iter *i)
-{
-	struct pipe_inode_info *pipe = i->pipe;
-	unsigned int p_mask = pipe->ring_size - 1;
-	unsigned int i_head;
-	size_t n, off;
-
-	if (!sanity(i))
-		return 0;
-
-	bytes = n = push_pipe(i, bytes, &i_head, &off);
-	if (unlikely(!n))
-		return 0;
-
-	do {
-		size_t chunk = min_t(size_t, n, PAGE_SIZE - off);
-		char *p = kmap_local_page(pipe->bufs[i_head & p_mask].page);
-		memset(p + off, 0, chunk);
-		kunmap_local(p);
-		i->head = i_head;
-		i->iov_offset = off + chunk;
-		n -= chunk;
-		off = 0;
-		i_head++;
-	} while (n);
-	i->count -= bytes;
-	return bytes;
-}
-
 size_t iov_iter_zero(size_t bytes, struct iov_iter *i)
 {
-	if (unlikely(iov_iter_is_pipe(i)))
-		return pipe_zero(bytes, i);
 	iterate_and_advance(i, bytes, base, len, count,
 		clear_user(base, len),
 		memset(base, 0, len)
@@ -953,93 +566,58 @@ size_t iov_iter_zero(size_t bytes, struct iov_iter *i)
 }
 EXPORT_SYMBOL(iov_iter_zero);
 
-size_t copy_page_from_iter_atomic(struct page *page, unsigned offset, size_t bytes,
-				  struct iov_iter *i)
+size_t copy_page_from_iter_atomic(struct page *page, size_t offset,
+		size_t bytes, struct iov_iter *i)
 {
-	char *kaddr = kmap_atomic(page), *p = kaddr + offset;
-	if (unlikely(!page_copy_sane(page, offset, bytes))) {
-		kunmap_atomic(kaddr);
+	size_t n, copied = 0;
+
+	if (!page_copy_sane(page, offset, bytes))
 		return 0;
-	}
-	if (unlikely(iov_iter_is_pipe(i) || iov_iter_is_discard(i))) {
-		kunmap_atomic(kaddr);
-		WARN_ON(1);
+	if (WARN_ON_ONCE(!i->data_source))
 		return 0;
-	}
-	iterate_and_advance(i, bytes, base, len, off,
-		copyin(p + off, base, len),
-		memcpy(p + off, base, len)
-	)
-	kunmap_atomic(kaddr);
-	return bytes;
+
+	do {
+		char *p;
+
+		n = bytes - copied;
+		if (PageHighMem(page)) {
+			page += offset / PAGE_SIZE;
+			offset %= PAGE_SIZE;
+			n = min_t(size_t, n, PAGE_SIZE - offset);
+		}
+
+		p = kmap_atomic(page) + offset;
+		iterate_and_advance(i, n, base, len, off,
+			copyin(p + off, base, len),
+			memcpy_from_iter(i, p + off, base, len)
+		)
+		kunmap_atomic(p);
+		copied += n;
+		offset += n;
+	} while (PageHighMem(page) && copied != bytes && n > 0);
+
+	return copied;
 }
 EXPORT_SYMBOL(copy_page_from_iter_atomic);
 
-static inline void pipe_truncate(struct iov_iter *i)
-{
-	struct pipe_inode_info *pipe = i->pipe;
-	unsigned int p_tail = pipe->tail;
-	unsigned int p_head = pipe->head;
-	unsigned int p_mask = pipe->ring_size - 1;
-
-	if (!pipe_empty(p_head, p_tail)) {
-		struct pipe_buffer *buf;
-		unsigned int i_head = i->head;
-		size_t off = i->iov_offset;
-
-		if (off) {
-			buf = &pipe->bufs[i_head & p_mask];
-			buf->len = off - buf->offset;
-			i_head++;
-		}
-		while (p_head != i_head) {
-			p_head--;
-			pipe_buf_release(pipe, &pipe->bufs[p_head & p_mask]);
-		}
-
-		pipe->head = p_head;
-	}
-}
-
-static void pipe_advance(struct iov_iter *i, size_t size)
-{
-	struct pipe_inode_info *pipe = i->pipe;
-	if (size) {
-		struct pipe_buffer *buf;
-		unsigned int p_mask = pipe->ring_size - 1;
-		unsigned int i_head = i->head;
-		size_t off = i->iov_offset, left = size;
-
-		if (off) /* make it relative to the beginning of buffer */
-			left += off - pipe->bufs[i_head & p_mask].offset;
-		while (1) {
-			buf = &pipe->bufs[i_head & p_mask];
-			if (left <= buf->len)
-				break;
-			left -= buf->len;
-			i_head++;
-		}
-		i->head = i_head;
-		i->iov_offset = buf->offset + left;
-	}
-	i->count -= size;
-	/* ... and discard everything past that point */
-	pipe_truncate(i);
-}
-
 static void iov_iter_bvec_advance(struct iov_iter *i, size_t size)
 {
-	struct bvec_iter bi;
+	const struct bio_vec *bvec, *end;
 
-	bi.bi_size = i->count;
-	bi.bi_bvec_done = i->iov_offset;
-	bi.bi_idx = 0;
-	bvec_iter_advance(i->bvec, &bi, size);
+	if (!i->count)
+		return;
+	i->count -= size;
 
-	i->bvec += bi.bi_idx;
-	i->nr_segs -= bi.bi_idx;
-	i->count = bi.bi_size;
-	i->iov_offset = bi.bi_bvec_done;
+	size += i->iov_offset;
+
+	for (bvec = i->bvec, end = bvec + i->nr_segs; bvec < end; bvec++) {
+		if (likely(size < bvec->bv_len))
+			break;
+		size -= bvec->bv_len;
+	}
+	i->iov_offset = size;
+	i->nr_segs -= bvec - i->bvec;
+	i->bvec = bvec;
 }
 
 static void iov_iter_iovec_advance(struct iov_iter *i, size_t size)
@@ -1051,30 +629,28 @@ static void iov_iter_iovec_advance(struct iov_iter *i, size_t size)
 	i->count -= size;
 
 	size += i->iov_offset; // from beginning of current segment
-	for (iov = i->iov, end = iov + i->nr_segs; iov < end; iov++) {
+	for (iov = iter_iov(i), end = iov + i->nr_segs; iov < end; iov++) {
 		if (likely(size < iov->iov_len))
 			break;
 		size -= iov->iov_len;
 	}
 	i->iov_offset = size;
-	i->nr_segs -= iov - i->iov;
-	i->iov = iov;
+	i->nr_segs -= iov - iter_iov(i);
+	i->__iov = iov;
 }
 
 void iov_iter_advance(struct iov_iter *i, size_t size)
 {
 	if (unlikely(i->count < size))
 		size = i->count;
-	if (likely(iter_is_iovec(i) || iov_iter_is_kvec(i))) {
+	if (likely(iter_is_ubuf(i)) || unlikely(iov_iter_is_xarray(i))) {
+		i->iov_offset += size;
+		i->count -= size;
+	} else if (likely(iter_is_iovec(i) || iov_iter_is_kvec(i))) {
 		/* iovec and kvec have identical layouts */
 		iov_iter_iovec_advance(i, size);
 	} else if (iov_iter_is_bvec(i)) {
 		iov_iter_bvec_advance(i, size);
-	} else if (iov_iter_is_pipe(i)) {
-		pipe_advance(i, size);
-	} else if (unlikely(iov_iter_is_xarray(i))) {
-		i->iov_offset += size;
-		i->count -= size;
 	} else if (iov_iter_is_discard(i)) {
 		i->count -= size;
 	}
@@ -1088,32 +664,6 @@ void iov_iter_revert(struct iov_iter *i, size_t unroll)
 	if (WARN_ON(unroll > MAX_RW_COUNT))
 		return;
 	i->count += unroll;
-	if (unlikely(iov_iter_is_pipe(i))) {
-		struct pipe_inode_info *pipe = i->pipe;
-		unsigned int p_mask = pipe->ring_size - 1;
-		unsigned int i_head = i->head;
-		size_t off = i->iov_offset;
-		while (1) {
-			struct pipe_buffer *b = &pipe->bufs[i_head & p_mask];
-			size_t n = off - b->offset;
-			if (unroll < n) {
-				off -= unroll;
-				break;
-			}
-			unroll -= n;
-			if (!unroll && i_head == i->start_head) {
-				off = 0;
-				break;
-			}
-			i_head--;
-			b = &pipe->bufs[i_head & p_mask];
-			off = b->offset + b->len;
-		}
-		i->iov_offset = off;
-		i->head = i_head;
-		pipe_truncate(i);
-		return;
-	}
 	if (unlikely(iov_iter_is_discard(i)))
 		return;
 	if (unroll <= i->iov_offset) {
@@ -1121,7 +671,7 @@ void iov_iter_revert(struct iov_iter *i, size_t unroll)
 		return;
 	}
 	unroll -= i->iov_offset;
-	if (iov_iter_is_xarray(i)) {
+	if (iov_iter_is_xarray(i) || iter_is_ubuf(i)) {
 		BUG(); /* We should never go beyond the start of the specified
 			* range since we might then be straying into pages that
 			* aren't pinned.
@@ -1139,12 +689,12 @@ void iov_iter_revert(struct iov_iter *i, size_t unroll)
 			unroll -= n;
 		}
 	} else { /* same logics for iovec and kvec */
-		const struct iovec *iov = i->iov;
+		const struct iovec *iov = iter_iov(i);
 		while (1) {
 			size_t n = (--iov)->iov_len;
 			i->nr_segs++;
 			if (unroll <= n) {
-				i->iov = iov;
+				i->__iov = iov;
 				i->iov_offset = n - unroll;
 				return;
 			}
@@ -1161,7 +711,7 @@ size_t iov_iter_single_seg_count(const struct iov_iter *i)
 {
 	if (i->nr_segs > 1) {
 		if (likely(iter_is_iovec(i) || iov_iter_is_kvec(i)))
-			return min(i->count, i->iov->iov_len - i->iov_offset);
+			return min(i->count, iter_iov(i)->iov_len - i->iov_offset);
 		if (iov_iter_is_bvec(i))
 			return min(i->count, i->bvec->bv_len - i->iov_offset);
 	}
@@ -1176,6 +726,7 @@ void iov_iter_kvec(struct iov_iter *i, unsigned int direction,
 	WARN_ON(direction & ~(READ | WRITE));
 	*i = (struct iov_iter){
 		.iter_type = ITER_KVEC,
+		.copy_mc = false,
 		.data_source = direction,
 		.kvec = kvec,
 		.nr_segs = nr_segs,
@@ -1192,6 +743,7 @@ void iov_iter_bvec(struct iov_iter *i, unsigned int direction,
 	WARN_ON(direction & ~(READ | WRITE));
 	*i = (struct iov_iter){
 		.iter_type = ITER_BVEC,
+		.copy_mc = false,
 		.data_source = direction,
 		.bvec = bvec,
 		.nr_segs = nr_segs,
@@ -1200,24 +752,6 @@ void iov_iter_bvec(struct iov_iter *i, unsigned int direction,
 	};
 }
 EXPORT_SYMBOL(iov_iter_bvec);
-
-void iov_iter_pipe(struct iov_iter *i, unsigned int direction,
-			struct pipe_inode_info *pipe,
-			size_t count)
-{
-	BUG_ON(direction != READ);
-	WARN_ON(pipe_full(pipe->head, pipe->tail, pipe->ring_size));
-	*i = (struct iov_iter){
-		.iter_type = ITER_PIPE,
-		.data_source = false,
-		.pipe = pipe,
-		.head = pipe->head,
-		.start_head = pipe->head,
-		.iov_offset = 0,
-		.count = count
-	};
-}
-EXPORT_SYMBOL(iov_iter_pipe);
 
 /**
  * iov_iter_xarray - Initialise an I/O iterator to use the pages in an xarray
@@ -1238,6 +772,7 @@ void iov_iter_xarray(struct iov_iter *i, unsigned int direction,
 	BUG_ON(direction & ~1);
 	*i = (struct iov_iter) {
 		.iter_type = ITER_XARRAY,
+		.copy_mc = false,
 		.data_source = direction,
 		.xarray = xarray,
 		.xarray_start = start,
@@ -1261,12 +796,100 @@ void iov_iter_discard(struct iov_iter *i, unsigned int direction, size_t count)
 	BUG_ON(direction != READ);
 	*i = (struct iov_iter){
 		.iter_type = ITER_DISCARD,
+		.copy_mc = false,
 		.data_source = false,
 		.count = count,
 		.iov_offset = 0
 	};
 }
 EXPORT_SYMBOL(iov_iter_discard);
+
+static bool iov_iter_aligned_iovec(const struct iov_iter *i, unsigned addr_mask,
+				   unsigned len_mask)
+{
+	size_t size = i->count;
+	size_t skip = i->iov_offset;
+	unsigned k;
+
+	for (k = 0; k < i->nr_segs; k++, skip = 0) {
+		const struct iovec *iov = iter_iov(i) + k;
+		size_t len = iov->iov_len - skip;
+
+		if (len > size)
+			len = size;
+		if (len & len_mask)
+			return false;
+		if ((unsigned long)(iov->iov_base + skip) & addr_mask)
+			return false;
+
+		size -= len;
+		if (!size)
+			break;
+	}
+	return true;
+}
+
+static bool iov_iter_aligned_bvec(const struct iov_iter *i, unsigned addr_mask,
+				  unsigned len_mask)
+{
+	size_t size = i->count;
+	unsigned skip = i->iov_offset;
+	unsigned k;
+
+	for (k = 0; k < i->nr_segs; k++, skip = 0) {
+		size_t len = i->bvec[k].bv_len - skip;
+
+		if (len > size)
+			len = size;
+		if (len & len_mask)
+			return false;
+		if ((unsigned long)(i->bvec[k].bv_offset + skip) & addr_mask)
+			return false;
+
+		size -= len;
+		if (!size)
+			break;
+	}
+	return true;
+}
+
+/**
+ * iov_iter_is_aligned() - Check if the addresses and lengths of each segments
+ * 	are aligned to the parameters.
+ *
+ * @i: &struct iov_iter to restore
+ * @addr_mask: bit mask to check against the iov element's addresses
+ * @len_mask: bit mask to check against the iov element's lengths
+ *
+ * Return: false if any addresses or lengths intersect with the provided masks
+ */
+bool iov_iter_is_aligned(const struct iov_iter *i, unsigned addr_mask,
+			 unsigned len_mask)
+{
+	if (likely(iter_is_ubuf(i))) {
+		if (i->count & len_mask)
+			return false;
+		if ((unsigned long)(i->ubuf + i->iov_offset) & addr_mask)
+			return false;
+		return true;
+	}
+
+	if (likely(iter_is_iovec(i) || iov_iter_is_kvec(i)))
+		return iov_iter_aligned_iovec(i, addr_mask, len_mask);
+
+	if (iov_iter_is_bvec(i))
+		return iov_iter_aligned_bvec(i, addr_mask, len_mask);
+
+	if (iov_iter_is_xarray(i)) {
+		if (i->count & len_mask)
+			return false;
+		if ((i->xarray_start + i->iov_offset) & addr_mask)
+			return false;
+	}
+
+	return true;
+}
+EXPORT_SYMBOL_GPL(iov_iter_is_aligned);
 
 static unsigned long iov_iter_alignment_iovec(const struct iov_iter *i)
 {
@@ -1276,9 +899,10 @@ static unsigned long iov_iter_alignment_iovec(const struct iov_iter *i)
 	unsigned k;
 
 	for (k = 0; k < i->nr_segs; k++, skip = 0) {
-		size_t len = i->iov[k].iov_len - skip;
+		const struct iovec *iov = iter_iov(i) + k;
+		size_t len = iov->iov_len - skip;
 		if (len) {
-			res |= (unsigned long)i->iov[k].iov_base + skip;
+			res |= (unsigned long)iov->iov_base + skip;
 			if (len > size)
 				len = size;
 			res |= len;
@@ -1312,21 +936,19 @@ static unsigned long iov_iter_alignment_bvec(const struct iov_iter *i)
 
 unsigned long iov_iter_alignment(const struct iov_iter *i)
 {
+	if (likely(iter_is_ubuf(i))) {
+		size_t size = i->count;
+		if (size)
+			return ((unsigned long)i->ubuf + i->iov_offset) | size;
+		return 0;
+	}
+
 	/* iovec and kvec have identical layouts */
 	if (likely(iter_is_iovec(i) || iov_iter_is_kvec(i)))
 		return iov_iter_alignment_iovec(i);
 
 	if (iov_iter_is_bvec(i))
 		return iov_iter_alignment_bvec(i);
-
-	if (iov_iter_is_pipe(i)) {
-		unsigned int p_mask = i->pipe->ring_size - 1;
-		size_t size = i->count;
-
-		if (size && i->iov_offset && allocated(&i->pipe->bufs[i->head & p_mask]))
-			return size | i->iov_offset;
-		return size;
-	}
 
 	if (iov_iter_is_xarray(i))
 		return (i->xarray_start + i->iov_offset) | i->count;
@@ -1342,63 +964,42 @@ unsigned long iov_iter_gap_alignment(const struct iov_iter *i)
 	size_t size = i->count;
 	unsigned k;
 
+	if (iter_is_ubuf(i))
+		return 0;
+
 	if (WARN_ON(!iter_is_iovec(i)))
 		return ~0U;
 
 	for (k = 0; k < i->nr_segs; k++) {
-		if (i->iov[k].iov_len) {
-			unsigned long base = (unsigned long)i->iov[k].iov_base;
+		const struct iovec *iov = iter_iov(i) + k;
+		if (iov->iov_len) {
+			unsigned long base = (unsigned long)iov->iov_base;
 			if (v) // if not the first one
 				res |= base | v; // this start | previous end
-			v = base + i->iov[k].iov_len;
-			if (size <= i->iov[k].iov_len)
+			v = base + iov->iov_len;
+			if (size <= iov->iov_len)
 				break;
-			size -= i->iov[k].iov_len;
+			size -= iov->iov_len;
 		}
 	}
 	return res;
 }
 EXPORT_SYMBOL(iov_iter_gap_alignment);
 
-static inline ssize_t __pipe_get_pages(struct iov_iter *i,
-				size_t maxsize,
-				struct page **pages,
-				int iter_head,
-				size_t *start)
+static int want_pages_array(struct page ***res, size_t size,
+			    size_t start, unsigned int maxpages)
 {
-	struct pipe_inode_info *pipe = i->pipe;
-	unsigned int p_mask = pipe->ring_size - 1;
-	ssize_t n = push_pipe(i, maxsize, &iter_head, start);
-	if (!n)
-		return -EFAULT;
+	unsigned int count = DIV_ROUND_UP(size + start, PAGE_SIZE);
 
-	maxsize = n;
-	n += *start;
-	while (n > 0) {
-		get_page(*pages++ = pipe->bufs[iter_head & p_mask].page);
-		iter_head++;
-		n -= PAGE_SIZE;
+	if (count > maxpages)
+		count = maxpages;
+	WARN_ON(!count);	// caller should've prevented that
+	if (!*res) {
+		*res = kvmalloc_array(count, sizeof(struct page *), GFP_KERNEL);
+		if (!*res)
+			return 0;
 	}
-
-	return maxsize;
-}
-
-static ssize_t pipe_get_pages(struct iov_iter *i,
-		   struct page **pages, size_t maxsize, unsigned maxpages,
-		   size_t *start)
-{
-	unsigned int iter_head, npages;
-	size_t capacity;
-
-	if (!sanity(i))
-		return -EFAULT;
-
-	data_start(i, &iter_head, start);
-	/* Amount of free space: some of this one + all after this one */
-	npages = pipe_space_for_user(iter_head, i->pipe->tail, i->pipe);
-	capacity = min(npages, maxpages) * PAGE_SIZE - *start;
-
-	return __pipe_get_pages(i, min(maxsize, capacity), pages, iter_head, start);
+	return count;
 }
 
 static ssize_t iter_xarray_populate_pages(struct page **pages, struct xarray *xa,
@@ -1429,270 +1030,165 @@ static ssize_t iter_xarray_populate_pages(struct page **pages, struct xarray *xa
 }
 
 static ssize_t iter_xarray_get_pages(struct iov_iter *i,
-				     struct page **pages, size_t maxsize,
+				     struct page ***pages, size_t maxsize,
 				     unsigned maxpages, size_t *_start_offset)
 {
-	unsigned nr, offset;
-	pgoff_t index, count;
-	size_t size = maxsize;
+	unsigned nr, offset, count;
+	pgoff_t index;
 	loff_t pos;
-
-	if (!size || !maxpages)
-		return 0;
 
 	pos = i->xarray_start + i->iov_offset;
 	index = pos >> PAGE_SHIFT;
 	offset = pos & ~PAGE_MASK;
 	*_start_offset = offset;
 
-	count = 1;
-	if (size > PAGE_SIZE - offset) {
-		size -= PAGE_SIZE - offset;
-		count += size >> PAGE_SHIFT;
-		size &= ~PAGE_MASK;
-		if (size)
-			count++;
-	}
-
-	if (count > maxpages)
-		count = maxpages;
-
-	nr = iter_xarray_populate_pages(pages, i->xarray, index, count);
+	count = want_pages_array(pages, maxsize, offset, maxpages);
+	if (!count)
+		return -ENOMEM;
+	nr = iter_xarray_populate_pages(*pages, i->xarray, index, count);
 	if (nr == 0)
 		return 0;
 
-	return min_t(size_t, nr * PAGE_SIZE - offset, maxsize);
+	maxsize = min_t(size_t, nr * PAGE_SIZE - offset, maxsize);
+	i->iov_offset += maxsize;
+	i->count -= maxsize;
+	return maxsize;
 }
 
-/* must be done on non-empty ITER_IOVEC one */
-static unsigned long first_iovec_segment(const struct iov_iter *i,
-					 size_t *size, size_t *start,
-					 size_t maxsize, unsigned maxpages)
+/* must be done on non-empty ITER_UBUF or ITER_IOVEC one */
+static unsigned long first_iovec_segment(const struct iov_iter *i, size_t *size)
 {
 	size_t skip;
 	long k;
 
+	if (iter_is_ubuf(i))
+		return (unsigned long)i->ubuf + i->iov_offset;
+
 	for (k = 0, skip = i->iov_offset; k < i->nr_segs; k++, skip = 0) {
-		unsigned long addr = (unsigned long)i->iov[k].iov_base + skip;
-		size_t len = i->iov[k].iov_len - skip;
+		const struct iovec *iov = iter_iov(i) + k;
+		size_t len = iov->iov_len - skip;
 
 		if (unlikely(!len))
 			continue;
-		if (len > maxsize)
-			len = maxsize;
-		len += (*start = addr % PAGE_SIZE);
-		if (len > maxpages * PAGE_SIZE)
-			len = maxpages * PAGE_SIZE;
-		*size = len;
-		return addr & PAGE_MASK;
+		if (*size > len)
+			*size = len;
+		return (unsigned long)iov->iov_base + skip;
 	}
 	BUG(); // if it had been empty, we wouldn't get called
 }
 
 /* must be done on non-empty ITER_BVEC one */
 static struct page *first_bvec_segment(const struct iov_iter *i,
-				       size_t *size, size_t *start,
-				       size_t maxsize, unsigned maxpages)
+				       size_t *size, size_t *start)
 {
 	struct page *page;
 	size_t skip = i->iov_offset, len;
 
 	len = i->bvec->bv_len - skip;
-	if (len > maxsize)
-		len = maxsize;
+	if (*size > len)
+		*size = len;
 	skip += i->bvec->bv_offset;
 	page = i->bvec->bv_page + skip / PAGE_SIZE;
-	len += (*start = skip % PAGE_SIZE);
-	if (len > maxpages * PAGE_SIZE)
-		len = maxpages * PAGE_SIZE;
-	*size = len;
+	*start = skip % PAGE_SIZE;
 	return page;
 }
 
-ssize_t iov_iter_get_pages(struct iov_iter *i,
-		   struct page **pages, size_t maxsize, unsigned maxpages,
-		   size_t *start)
+static ssize_t __iov_iter_get_pages_alloc(struct iov_iter *i,
+		   struct page ***pages, size_t maxsize,
+		   unsigned int maxpages, size_t *start)
 {
-	size_t len;
-	int n, res;
+	unsigned int n, gup_flags = 0;
 
 	if (maxsize > i->count)
 		maxsize = i->count;
 	if (!maxsize)
 		return 0;
+	if (maxsize > MAX_RW_COUNT)
+		maxsize = MAX_RW_COUNT;
 
-	if (likely(iter_is_iovec(i))) {
-		unsigned int gup_flags = 0;
+	if (likely(user_backed_iter(i))) {
 		unsigned long addr;
+		int res;
 
 		if (iov_iter_rw(i) != WRITE)
 			gup_flags |= FOLL_WRITE;
 		if (i->nofault)
 			gup_flags |= FOLL_NOFAULT;
 
-		addr = first_iovec_segment(i, &len, start, maxsize, maxpages);
-		n = DIV_ROUND_UP(len, PAGE_SIZE);
-		res = get_user_pages_fast(addr, n, gup_flags, pages);
+		addr = first_iovec_segment(i, &maxsize);
+		*start = addr % PAGE_SIZE;
+		addr &= PAGE_MASK;
+		n = want_pages_array(pages, maxsize, *start, maxpages);
+		if (!n)
+			return -ENOMEM;
+		res = get_user_pages_fast(addr, n, gup_flags, *pages);
 		if (unlikely(res <= 0))
 			return res;
-		return (res == n ? len : res * PAGE_SIZE) - *start;
+		maxsize = min_t(size_t, maxsize, res * PAGE_SIZE - *start);
+		iov_iter_advance(i, maxsize);
+		return maxsize;
 	}
 	if (iov_iter_is_bvec(i)) {
+		struct page **p;
 		struct page *page;
 
-		page = first_bvec_segment(i, &len, start, maxsize, maxpages);
-		n = DIV_ROUND_UP(len, PAGE_SIZE);
-		while (n--)
-			get_page(*pages++ = page++);
-		return len - *start;
+		page = first_bvec_segment(i, &maxsize, start);
+		n = want_pages_array(pages, maxsize, *start, maxpages);
+		if (!n)
+			return -ENOMEM;
+		p = *pages;
+		for (int k = 0; k < n; k++)
+			get_page(p[k] = page + k);
+		maxsize = min_t(size_t, maxsize, n * PAGE_SIZE - *start);
+		i->count -= maxsize;
+		i->iov_offset += maxsize;
+		if (i->iov_offset == i->bvec->bv_len) {
+			i->iov_offset = 0;
+			i->bvec++;
+			i->nr_segs--;
+		}
+		return maxsize;
 	}
-	if (iov_iter_is_pipe(i))
-		return pipe_get_pages(i, pages, maxsize, maxpages, start);
 	if (iov_iter_is_xarray(i))
 		return iter_xarray_get_pages(i, pages, maxsize, maxpages, start);
 	return -EFAULT;
 }
-EXPORT_SYMBOL(iov_iter_get_pages);
 
-static struct page **get_pages_array(size_t n)
+ssize_t iov_iter_get_pages2(struct iov_iter *i, struct page **pages,
+		size_t maxsize, unsigned maxpages, size_t *start)
 {
-	return kvmalloc_array(n, sizeof(struct page *), GFP_KERNEL);
-}
-
-static ssize_t pipe_get_pages_alloc(struct iov_iter *i,
-		   struct page ***pages, size_t maxsize,
-		   size_t *start)
-{
-	struct page **p;
-	unsigned int iter_head, npages;
-	ssize_t n;
-
-	if (!sanity(i))
-		return -EFAULT;
-
-	data_start(i, &iter_head, start);
-	/* Amount of free space: some of this one + all after this one */
-	npages = pipe_space_for_user(iter_head, i->pipe->tail, i->pipe);
-	n = npages * PAGE_SIZE - *start;
-	if (maxsize > n)
-		maxsize = n;
-	else
-		npages = DIV_ROUND_UP(maxsize + *start, PAGE_SIZE);
-	p = get_pages_array(npages);
-	if (!p)
-		return -ENOMEM;
-	n = __pipe_get_pages(i, maxsize, p, iter_head, start);
-	if (n > 0)
-		*pages = p;
-	else
-		kvfree(p);
-	return n;
-}
-
-static ssize_t iter_xarray_get_pages_alloc(struct iov_iter *i,
-					   struct page ***pages, size_t maxsize,
-					   size_t *_start_offset)
-{
-	struct page **p;
-	unsigned nr, offset;
-	pgoff_t index, count;
-	size_t size = maxsize;
-	loff_t pos;
-
-	if (!size)
+	if (!maxpages)
 		return 0;
+	BUG_ON(!pages);
 
-	pos = i->xarray_start + i->iov_offset;
-	index = pos >> PAGE_SHIFT;
-	offset = pos & ~PAGE_MASK;
-	*_start_offset = offset;
-
-	count = 1;
-	if (size > PAGE_SIZE - offset) {
-		size -= PAGE_SIZE - offset;
-		count += size >> PAGE_SHIFT;
-		size &= ~PAGE_MASK;
-		if (size)
-			count++;
-	}
-
-	p = get_pages_array(count);
-	if (!p)
-		return -ENOMEM;
-	*pages = p;
-
-	nr = iter_xarray_populate_pages(p, i->xarray, index, count);
-	if (nr == 0)
-		return 0;
-
-	return min_t(size_t, nr * PAGE_SIZE - offset, maxsize);
+	return __iov_iter_get_pages_alloc(i, &pages, maxsize, maxpages, start);
 }
+EXPORT_SYMBOL(iov_iter_get_pages2);
 
-ssize_t iov_iter_get_pages_alloc(struct iov_iter *i,
-		   struct page ***pages, size_t maxsize,
-		   size_t *start)
+ssize_t iov_iter_get_pages_alloc2(struct iov_iter *i,
+		struct page ***pages, size_t maxsize, size_t *start)
 {
-	struct page **p;
-	size_t len;
-	int n, res;
+	ssize_t len;
 
-	if (maxsize > i->count)
-		maxsize = i->count;
-	if (!maxsize)
-		return 0;
+	*pages = NULL;
 
-	if (likely(iter_is_iovec(i))) {
-		unsigned int gup_flags = 0;
-		unsigned long addr;
-
-		if (iov_iter_rw(i) != WRITE)
-			gup_flags |= FOLL_WRITE;
-		if (i->nofault)
-			gup_flags |= FOLL_NOFAULT;
-
-		addr = first_iovec_segment(i, &len, start, maxsize, ~0U);
-		n = DIV_ROUND_UP(len, PAGE_SIZE);
-		p = get_pages_array(n);
-		if (!p)
-			return -ENOMEM;
-		res = get_user_pages_fast(addr, n, gup_flags, p);
-		if (unlikely(res <= 0)) {
-			kvfree(p);
-			*pages = NULL;
-			return res;
-		}
-		*pages = p;
-		return (res == n ? len : res * PAGE_SIZE) - *start;
+	len = __iov_iter_get_pages_alloc(i, pages, maxsize, ~0U, start);
+	if (len <= 0) {
+		kvfree(*pages);
+		*pages = NULL;
 	}
-	if (iov_iter_is_bvec(i)) {
-		struct page *page;
-
-		page = first_bvec_segment(i, &len, start, maxsize, ~0U);
-		n = DIV_ROUND_UP(len, PAGE_SIZE);
-		*pages = p = get_pages_array(n);
-		if (!p)
-			return -ENOMEM;
-		while (n--)
-			get_page(*p++ = page++);
-		return len - *start;
-	}
-	if (iov_iter_is_pipe(i))
-		return pipe_get_pages_alloc(i, pages, maxsize, start);
-	if (iov_iter_is_xarray(i))
-		return iter_xarray_get_pages_alloc(i, pages, maxsize, start);
-	return -EFAULT;
+	return len;
 }
-EXPORT_SYMBOL(iov_iter_get_pages_alloc);
+EXPORT_SYMBOL(iov_iter_get_pages_alloc2);
 
 size_t csum_and_copy_from_iter(void *addr, size_t bytes, __wsum *csum,
 			       struct iov_iter *i)
 {
 	__wsum sum, next;
 	sum = *csum;
-	if (unlikely(iov_iter_is_pipe(i) || iov_iter_is_discard(i))) {
-		WARN_ON(1);
+	if (WARN_ON_ONCE(!i->data_source))
 		return 0;
-	}
+
 	iterate_and_advance(i, bytes, base, len, off, ({
 		next = csum_and_copy_from_user(base, addr + off, len);
 		sum = csum_block_add(sum, next, off);
@@ -1712,15 +1208,19 @@ size_t csum_and_copy_to_iter(const void *addr, size_t bytes, void *_csstate,
 	struct csum_state *csstate = _csstate;
 	__wsum sum, next;
 
-	if (unlikely(iov_iter_is_discard(i))) {
-		WARN_ON(1);	/* for now */
+	if (WARN_ON_ONCE(i->data_source))
 		return 0;
+	if (unlikely(iov_iter_is_discard(i))) {
+		// can't use csum_memcpy() for that one - data is not copied
+		csstate->csum = csum_block_add(csstate->csum,
+					       csum_partial(addr, bytes, 0),
+					       csstate->off);
+		csstate->off += bytes;
+		return bytes;
 	}
 
 	sum = csum_shift(csstate->csum, csstate->off);
-	if (unlikely(iov_iter_is_pipe(i)))
-		bytes = csum_and_copy_to_pipe_iter(addr, bytes, i, &sum);
-	else iterate_and_advance(i, bytes, base, len, off, ({
+	iterate_and_advance(i, bytes, base, len, off, ({
 		next = csum_and_copy_to_user(addr + off, base, len);
 		sum = csum_block_add(sum, next, off);
 		next ? 0 : len;
@@ -1759,7 +1259,7 @@ static int iov_npages(const struct iov_iter *i, int maxpages)
 	const struct iovec *p;
 	int npages = 0;
 
-	for (p = i->iov; size; skip = 0, p++) {
+	for (p = iter_iov(i); size; skip = 0, p++) {
 		unsigned offs = offset_in_page(p->iov_base + skip);
 		size_t len = min(p->iov_len - skip, size);
 
@@ -1795,24 +1295,16 @@ int iov_iter_npages(const struct iov_iter *i, int maxpages)
 {
 	if (unlikely(!i->count))
 		return 0;
+	if (likely(iter_is_ubuf(i))) {
+		unsigned offs = offset_in_page(i->ubuf + i->iov_offset);
+		int npages = DIV_ROUND_UP(offs + i->count, PAGE_SIZE);
+		return min(npages, maxpages);
+	}
 	/* iovec and kvec have identical layouts */
 	if (likely(iter_is_iovec(i) || iov_iter_is_kvec(i)))
 		return iov_npages(i, maxpages);
 	if (iov_iter_is_bvec(i))
 		return bvec_npages(i, maxpages);
-	if (iov_iter_is_pipe(i)) {
-		unsigned int iter_head;
-		int npages;
-		size_t off;
-
-		if (!sanity(i))
-			return 0;
-
-		data_start(i, &iter_head, &off);
-		/* some of this one + all after this one */
-		npages = pipe_space_for_user(iter_head, i->pipe->tail, i->pipe);
-		return min(npages, maxpages);
-	}
 	if (iov_iter_is_xarray(i)) {
 		unsigned offset = (i->xarray_start + i->iov_offset) % PAGE_SIZE;
 		int npages = DIV_ROUND_UP(offset + i->count, PAGE_SIZE);
@@ -1825,25 +1317,20 @@ EXPORT_SYMBOL(iov_iter_npages);
 const void *dup_iter(struct iov_iter *new, struct iov_iter *old, gfp_t flags)
 {
 	*new = *old;
-	if (unlikely(iov_iter_is_pipe(new))) {
-		WARN_ON(1);
-		return NULL;
-	}
-	if (unlikely(iov_iter_is_discard(new) || iov_iter_is_xarray(new)))
-		return NULL;
 	if (iov_iter_is_bvec(new))
 		return new->bvec = kmemdup(new->bvec,
 				    new->nr_segs * sizeof(struct bio_vec),
 				    flags);
-	else
+	else if (iov_iter_is_kvec(new) || iter_is_iovec(new))
 		/* iovec and kvec have identical layout */
-		return new->iov = kmemdup(new->iov,
+		return new->__iov = kmemdup(new->__iov,
 				   new->nr_segs * sizeof(struct iovec),
 				   flags);
+	return NULL;
 }
 EXPORT_SYMBOL(dup_iter);
 
-static int copy_compat_iovec_from_user(struct iovec *iov,
+static __noclone int copy_compat_iovec_from_user(struct iovec *iov,
 		const struct iovec __user *uvec, unsigned long nr_segs)
 {
 	const struct compat_iovec __user *uiov =
@@ -1875,19 +1362,36 @@ uaccess_end:
 	return ret;
 }
 
-static int copy_iovec_from_user(struct iovec *iov,
-		const struct iovec __user *uvec, unsigned long nr_segs)
+static __noclone int copy_iovec_from_user(struct iovec *iov,
+		const struct iovec __user *uiov, unsigned long nr_segs)
 {
-	unsigned long seg;
+	int ret = -EFAULT;
 
-	if (copy_from_user(iov, uvec, nr_segs * sizeof(*uvec)))
+	if (!user_access_begin(uiov, nr_segs * sizeof(*uiov)))
 		return -EFAULT;
-	for (seg = 0; seg < nr_segs; seg++) {
-		if ((ssize_t)iov[seg].iov_len < 0)
-			return -EINVAL;
-	}
 
-	return 0;
+	do {
+		void __user *buf;
+		ssize_t len;
+
+		unsafe_get_user(len, &uiov->iov_len, uaccess_end);
+		unsafe_get_user(buf, &uiov->iov_base, uaccess_end);
+
+		/* check for size_t not fitting in ssize_t .. */
+		if (unlikely(len < 0)) {
+			ret = -EINVAL;
+			goto uaccess_end;
+		}
+		iov->iov_base = buf;
+		iov->iov_len = len;
+
+		uiov++; iov++;
+	} while (--nr_segs);
+
+	ret = 0;
+uaccess_end:
+	user_access_end();
+	return ret;
 }
 
 struct iovec *iovec_from_user(const struct iovec __user *uvec,
@@ -1912,7 +1416,7 @@ struct iovec *iovec_from_user(const struct iovec __user *uvec,
 			return ERR_PTR(-ENOMEM);
 	}
 
-	if (compat)
+	if (unlikely(compat))
 		ret = copy_compat_iovec_from_user(iov, uvec, nr_segs);
 	else
 		ret = copy_iovec_from_user(iov, uvec, nr_segs);
@@ -1925,6 +1429,30 @@ struct iovec *iovec_from_user(const struct iovec __user *uvec,
 	return iov;
 }
 
+/*
+ * Single segment iovec supplied by the user, import it as ITER_UBUF.
+ */
+static ssize_t __import_iovec_ubuf(int type, const struct iovec __user *uvec,
+				   struct iovec **iovp, struct iov_iter *i,
+				   bool compat)
+{
+	struct iovec *iov = *iovp;
+	ssize_t ret;
+
+	if (compat)
+		ret = copy_compat_iovec_from_user(iov, uvec, 1);
+	else
+		ret = copy_iovec_from_user(iov, uvec, 1);
+	if (unlikely(ret))
+		return ret;
+
+	ret = import_ubuf(type, iov->iov_base, iov->iov_len, i);
+	if (unlikely(ret))
+		return ret;
+	*iovp = NULL;
+	return i->count;
+}
+
 ssize_t __import_iovec(int type, const struct iovec __user *uvec,
 		 unsigned nr_segs, unsigned fast_segs, struct iovec **iovp,
 		 struct iov_iter *i, bool compat)
@@ -1932,6 +1460,9 @@ ssize_t __import_iovec(int type, const struct iovec __user *uvec,
 	ssize_t total_len = 0;
 	unsigned long seg;
 	struct iovec *iov;
+
+	if (nr_segs == 1)
+		return __import_iovec_ubuf(type, uvec, iovp, i, compat);
 
 	iov = iovec_from_user(uvec, nr_segs, fast_segs, *iovp, compat);
 	if (IS_ERR(iov)) {
@@ -2011,12 +1542,22 @@ int import_single_range(int rw, void __user *buf, size_t len,
 	if (unlikely(!access_ok(buf, len)))
 		return -EFAULT;
 
-	iov->iov_base = buf;
-	iov->iov_len = len;
-	iov_iter_init(i, rw, iov, 1, len);
+	iov_iter_ubuf(i, rw, buf, len);
 	return 0;
 }
 EXPORT_SYMBOL(import_single_range);
+
+int import_ubuf(int rw, void __user *buf, size_t len, struct iov_iter *i)
+{
+	if (len > MAX_RW_COUNT)
+		len = MAX_RW_COUNT;
+	if (unlikely(!access_ok(buf, len)))
+		return -EFAULT;
+
+	iov_iter_ubuf(i, rw, buf, len);
+	return 0;
+}
+EXPORT_SYMBOL_GPL(import_ubuf);
 
 /**
  * iov_iter_restore() - Restore a &struct iov_iter to the same state as when
@@ -2032,11 +1573,13 @@ EXPORT_SYMBOL(import_single_range);
  */
 void iov_iter_restore(struct iov_iter *i, struct iov_iter_state *state)
 {
-	if (WARN_ON_ONCE(!iov_iter_is_bvec(i) && !iter_is_iovec(i)) &&
-			 !iov_iter_is_kvec(i))
+	if (WARN_ON_ONCE(!iov_iter_is_bvec(i) && !iter_is_iovec(i) &&
+			 !iter_is_ubuf(i)) && !iov_iter_is_kvec(i))
 		return;
 	i->iov_offset = state->iov_offset;
 	i->count = state->count;
+	if (iter_is_ubuf(i))
+		return;
 	/*
 	 * For the *vec iters, nr_segs + iov is constant - if we increment
 	 * the vec, then we also decrement the nr_segs count. Hence we don't
@@ -2050,6 +1593,270 @@ void iov_iter_restore(struct iov_iter *i, struct iov_iter_state *state)
 	if (iov_iter_is_bvec(i))
 		i->bvec -= state->nr_segs - i->nr_segs;
 	else
-		i->iov -= state->nr_segs - i->nr_segs;
+		i->__iov -= state->nr_segs - i->nr_segs;
 	i->nr_segs = state->nr_segs;
 }
+
+/*
+ * Extract a list of contiguous pages from an ITER_XARRAY iterator.  This does not
+ * get references on the pages, nor does it get a pin on them.
+ */
+static ssize_t iov_iter_extract_xarray_pages(struct iov_iter *i,
+					     struct page ***pages, size_t maxsize,
+					     unsigned int maxpages,
+					     iov_iter_extraction_t extraction_flags,
+					     size_t *offset0)
+{
+	struct page *page, **p;
+	unsigned int nr = 0, offset;
+	loff_t pos = i->xarray_start + i->iov_offset;
+	pgoff_t index = pos >> PAGE_SHIFT;
+	XA_STATE(xas, i->xarray, index);
+
+	offset = pos & ~PAGE_MASK;
+	*offset0 = offset;
+
+	maxpages = want_pages_array(pages, maxsize, offset, maxpages);
+	if (!maxpages)
+		return -ENOMEM;
+	p = *pages;
+
+	rcu_read_lock();
+	for (page = xas_load(&xas); page; page = xas_next(&xas)) {
+		if (xas_retry(&xas, page))
+			continue;
+
+		/* Has the page moved or been split? */
+		if (unlikely(page != xas_reload(&xas))) {
+			xas_reset(&xas);
+			continue;
+		}
+
+		p[nr++] = find_subpage(page, xas.xa_index);
+		if (nr == maxpages)
+			break;
+	}
+	rcu_read_unlock();
+
+	maxsize = min_t(size_t, nr * PAGE_SIZE - offset, maxsize);
+	iov_iter_advance(i, maxsize);
+	return maxsize;
+}
+
+/*
+ * Extract a list of contiguous pages from an ITER_BVEC iterator.  This does
+ * not get references on the pages, nor does it get a pin on them.
+ */
+static ssize_t iov_iter_extract_bvec_pages(struct iov_iter *i,
+					   struct page ***pages, size_t maxsize,
+					   unsigned int maxpages,
+					   iov_iter_extraction_t extraction_flags,
+					   size_t *offset0)
+{
+	struct page **p, *page;
+	size_t skip = i->iov_offset, offset;
+	int k;
+
+	for (;;) {
+		if (i->nr_segs == 0)
+			return 0;
+		maxsize = min(maxsize, i->bvec->bv_len - skip);
+		if (maxsize)
+			break;
+		i->iov_offset = 0;
+		i->nr_segs--;
+		i->bvec++;
+		skip = 0;
+	}
+
+	skip += i->bvec->bv_offset;
+	page = i->bvec->bv_page + skip / PAGE_SIZE;
+	offset = skip % PAGE_SIZE;
+	*offset0 = offset;
+
+	maxpages = want_pages_array(pages, maxsize, offset, maxpages);
+	if (!maxpages)
+		return -ENOMEM;
+	p = *pages;
+	for (k = 0; k < maxpages; k++)
+		p[k] = page + k;
+
+	maxsize = min_t(size_t, maxsize, maxpages * PAGE_SIZE - offset);
+	iov_iter_advance(i, maxsize);
+	return maxsize;
+}
+
+/*
+ * Extract a list of virtually contiguous pages from an ITER_KVEC iterator.
+ * This does not get references on the pages, nor does it get a pin on them.
+ */
+static ssize_t iov_iter_extract_kvec_pages(struct iov_iter *i,
+					   struct page ***pages, size_t maxsize,
+					   unsigned int maxpages,
+					   iov_iter_extraction_t extraction_flags,
+					   size_t *offset0)
+{
+	struct page **p, *page;
+	const void *kaddr;
+	size_t skip = i->iov_offset, offset, len;
+	int k;
+
+	for (;;) {
+		if (i->nr_segs == 0)
+			return 0;
+		maxsize = min(maxsize, i->kvec->iov_len - skip);
+		if (maxsize)
+			break;
+		i->iov_offset = 0;
+		i->nr_segs--;
+		i->kvec++;
+		skip = 0;
+	}
+
+	kaddr = i->kvec->iov_base + skip;
+	offset = (unsigned long)kaddr & ~PAGE_MASK;
+	*offset0 = offset;
+
+	maxpages = want_pages_array(pages, maxsize, offset, maxpages);
+	if (!maxpages)
+		return -ENOMEM;
+	p = *pages;
+
+	kaddr -= offset;
+	len = offset + maxsize;
+	for (k = 0; k < maxpages; k++) {
+		size_t seg = min_t(size_t, len, PAGE_SIZE);
+
+		if (is_vmalloc_or_module_addr(kaddr))
+			page = vmalloc_to_page(kaddr);
+		else
+			page = virt_to_page(kaddr);
+
+		p[k] = page;
+		len -= seg;
+		kaddr += PAGE_SIZE;
+	}
+
+	maxsize = min_t(size_t, maxsize, maxpages * PAGE_SIZE - offset);
+	iov_iter_advance(i, maxsize);
+	return maxsize;
+}
+
+/*
+ * Extract a list of contiguous pages from a user iterator and get a pin on
+ * each of them.  This should only be used if the iterator is user-backed
+ * (IOBUF/UBUF).
+ *
+ * It does not get refs on the pages, but the pages must be unpinned by the
+ * caller once the transfer is complete.
+ *
+ * This is safe to be used where background IO/DMA *is* going to be modifying
+ * the buffer; using a pin rather than a ref makes forces fork() to give the
+ * child a copy of the page.
+ */
+static ssize_t iov_iter_extract_user_pages(struct iov_iter *i,
+					   struct page ***pages,
+					   size_t maxsize,
+					   unsigned int maxpages,
+					   iov_iter_extraction_t extraction_flags,
+					   size_t *offset0)
+{
+	unsigned long addr;
+	unsigned int gup_flags = 0;
+	size_t offset;
+	int res;
+
+	if (i->data_source == ITER_DEST)
+		gup_flags |= FOLL_WRITE;
+	if (extraction_flags & ITER_ALLOW_P2PDMA)
+		gup_flags |= FOLL_PCI_P2PDMA;
+	if (i->nofault)
+		gup_flags |= FOLL_NOFAULT;
+
+	addr = first_iovec_segment(i, &maxsize);
+	*offset0 = offset = addr % PAGE_SIZE;
+	addr &= PAGE_MASK;
+	maxpages = want_pages_array(pages, maxsize, offset, maxpages);
+	if (!maxpages)
+		return -ENOMEM;
+	res = pin_user_pages_fast(addr, maxpages, gup_flags, *pages);
+	if (unlikely(res <= 0))
+		return res;
+	maxsize = min_t(size_t, maxsize, res * PAGE_SIZE - offset);
+	iov_iter_advance(i, maxsize);
+	return maxsize;
+}
+
+/**
+ * iov_iter_extract_pages - Extract a list of contiguous pages from an iterator
+ * @i: The iterator to extract from
+ * @pages: Where to return the list of pages
+ * @maxsize: The maximum amount of iterator to extract
+ * @maxpages: The maximum size of the list of pages
+ * @extraction_flags: Flags to qualify request
+ * @offset0: Where to return the starting offset into (*@pages)[0]
+ *
+ * Extract a list of contiguous pages from the current point of the iterator,
+ * advancing the iterator.  The maximum number of pages and the maximum amount
+ * of page contents can be set.
+ *
+ * If *@pages is NULL, a page list will be allocated to the required size and
+ * *@pages will be set to its base.  If *@pages is not NULL, it will be assumed
+ * that the caller allocated a page list at least @maxpages in size and this
+ * will be filled in.
+ *
+ * @extraction_flags can have ITER_ALLOW_P2PDMA set to request peer-to-peer DMA
+ * be allowed on the pages extracted.
+ *
+ * The iov_iter_extract_will_pin() function can be used to query how cleanup
+ * should be performed.
+ *
+ * Extra refs or pins on the pages may be obtained as follows:
+ *
+ *  (*) If the iterator is user-backed (ITER_IOVEC/ITER_UBUF), pins will be
+ *      added to the pages, but refs will not be taken.
+ *      iov_iter_extract_will_pin() will return true.
+ *
+ *  (*) If the iterator is ITER_KVEC, ITER_BVEC or ITER_XARRAY, the pages are
+ *      merely listed; no extra refs or pins are obtained.
+ *      iov_iter_extract_will_pin() will return 0.
+ *
+ * Note also:
+ *
+ *  (*) Use with ITER_DISCARD is not supported as that has no content.
+ *
+ * On success, the function sets *@pages to the new pagelist, if allocated, and
+ * sets *offset0 to the offset into the first page.
+ *
+ * It may also return -ENOMEM and -EFAULT.
+ */
+ssize_t iov_iter_extract_pages(struct iov_iter *i,
+			       struct page ***pages,
+			       size_t maxsize,
+			       unsigned int maxpages,
+			       iov_iter_extraction_t extraction_flags,
+			       size_t *offset0)
+{
+	maxsize = min_t(size_t, min_t(size_t, maxsize, i->count), MAX_RW_COUNT);
+	if (!maxsize)
+		return 0;
+
+	if (likely(user_backed_iter(i)))
+		return iov_iter_extract_user_pages(i, pages, maxsize,
+						   maxpages, extraction_flags,
+						   offset0);
+	if (iov_iter_is_kvec(i))
+		return iov_iter_extract_kvec_pages(i, pages, maxsize,
+						   maxpages, extraction_flags,
+						   offset0);
+	if (iov_iter_is_bvec(i))
+		return iov_iter_extract_bvec_pages(i, pages, maxsize,
+						   maxpages, extraction_flags,
+						   offset0);
+	if (iov_iter_is_xarray(i))
+		return iov_iter_extract_xarray_pages(i, pages, maxsize,
+						     maxpages, extraction_flags,
+						     offset0);
+	return -EFAULT;
+}
+EXPORT_SYMBOL_GPL(iov_iter_extract_pages);

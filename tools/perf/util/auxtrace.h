@@ -15,7 +15,7 @@
 #include <linux/list.h>
 #include <linux/perf_event.h>
 #include <linux/types.h>
-#include <internal/cpumap.h>
+#include <perf/cpumap.h>
 #include <asm/bitsperlong.h>
 #include <asm/barrier.h>
 
@@ -48,6 +48,7 @@ enum auxtrace_type {
 	PERF_AUXTRACE_CS_ETM,
 	PERF_AUXTRACE_ARM_SPE,
 	PERF_AUXTRACE_S390_CPUMSF,
+	PERF_AUXTRACE_HISI_PTT,
 };
 
 enum itrace_period_type {
@@ -60,6 +61,7 @@ enum itrace_period_type {
 #define AUXTRACE_ERR_FLG_DATA_LOST	(1 << ('l' - 'a'))
 
 #define AUXTRACE_LOG_FLG_ALL_PERF_EVTS	(1 << ('a' - 'a'))
+#define AUXTRACE_LOG_FLG_ON_ERROR	(1 << ('e' - 'a'))
 #define AUXTRACE_LOG_FLG_USE_STDOUT	(1 << ('o' - 'a'))
 
 /**
@@ -69,6 +71,9 @@ enum itrace_period_type {
  * @inject: indicates the event (not just the sample) must be fully synthesized
  *          because 'perf inject' will write it out
  * @instructions: whether to synthesize 'instructions' events
+ * @cycles: whether to synthesize 'cycles' events
+ *          (not fully accurate, since CYC packets are only emitted
+ *          together with other events, such as branches)
  * @branches: whether to synthesize 'branches' events
  *            (branch misses only for Arm SPE)
  * @transactions: whether to synthesize events for transactions
@@ -110,12 +115,14 @@ enum itrace_period_type {
  * @log_plus_flags: flags to affect what is logged
  * @log_minus_flags: flags to affect what is logged
  * @quick: quicker (less detailed) decoding
+ * @log_on_error_size: size of log to keep for outputting log only on errors
  */
 struct itrace_synth_opts {
 	bool			set;
 	bool			default_no_sample;
 	bool			inject;
 	bool			instructions;
+	bool			cycles;
 	bool			branches;
 	bool			transactions;
 	bool			ptwrites;
@@ -155,6 +162,7 @@ struct itrace_synth_opts {
 	unsigned int		log_plus_flags;
 	unsigned int		log_minus_flags;
 	unsigned int		quick;
+	unsigned int		log_on_error_size;
 };
 
 /**
@@ -595,6 +603,10 @@ int auxtrace_index__process(int fd, u64 size, struct perf_session *session,
 			    bool needs_swap);
 void auxtrace_index__free(struct list_head *head);
 
+void auxtrace_synth_guest_error(struct perf_record_auxtrace_error *auxtrace_error, int type,
+				int code, int cpu, pid_t pid, pid_t tid, u64 ip,
+				const char *msg, u64 timestamp,
+				pid_t machine_pid, int vcpu);
 void auxtrace_synth_error(struct perf_record_auxtrace_error *auxtrace_error, int type,
 			  int code, int cpu, pid_t pid, pid_t tid, u64 ip,
 			  const char *msg, u64 timestamp);
@@ -635,6 +647,7 @@ bool auxtrace__evsel_is_auxtrace(struct perf_session *session,
 
 #define ITRACE_HELP \
 "				i[period]:    		synthesize instructions events\n" \
+"				y[period]:    		synthesize cycles events (same period as i)\n" \
 "				b:	    		synthesize branches events (branch misses for Arm SPE)\n" \
 "				c:	    		synthesize branches events (calls only)\n"	\
 "				r:	    		synthesize branches events (returns only)\n" \
@@ -666,7 +679,7 @@ bool auxtrace__evsel_is_auxtrace(struct perf_session *session,
 "				A:			approximate IPC\n" \
 "				Z:			prefer to ignore timestamps (so-called \"timeless\" decoding)\n" \
 "				PERIOD[ns|us|ms|i|t]:   specify period to sample stream\n" \
-"				concatenate multiple options. Default is ibxwpe or cewp\n"
+"				concatenate multiple options. Default is iybxwpe or cewp\n"
 
 static inline
 void itrace_synth_opts__set_time_range(struct itrace_synth_opts *opts,

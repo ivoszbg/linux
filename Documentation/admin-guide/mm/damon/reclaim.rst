@@ -46,13 +46,7 @@ that is built with ``CONFIG_DAMON_RECLAIM=y``.
 To let sysadmins enable or disable it and tune for the given system,
 DAMON_RECLAIM utilizes module parameters.  That is, you can put
 ``damon_reclaim.<parameter>=<value>`` on the kernel boot command line or write
-proper values to ``/sys/modules/damon_reclaim/parameters/<parameter>`` files.
-
-Note that the parameter values except ``enabled`` are applied only when
-DAMON_RECLAIM starts.  Therefore, if you want to apply new parameter values in
-runtime and DAMON_RECLAIM is already enabled, you should disable and re-enable
-it via ``enabled`` parameter file.  Writing of the new values to proper
-parameter values should be done before the re-enablement.
+proper values to ``/sys/module/damon_reclaim/parameters/<parameter>`` files.
 
 Below are the description of each parameter.
 
@@ -211,6 +205,15 @@ The end physical address of memory region that DAMON_RECLAIM will do work
 against.  That is, DAMON_RECLAIM will find cold memory regions in this region
 and reclaims.  By default, biggest System RAM is used as the region.
 
+skip_anon
+---------
+
+Skip anonymous pages reclamation.
+
+If this parameter is set as ``Y``, DAMON_RECLAIM does not reclaim anonymous
+pages.  By default, ``N``.
+
+
 kdamond_pid
 -----------
 
@@ -257,7 +260,7 @@ therefore the free memory rate becomes lower than 20%, it asks DAMON_RECLAIM to
 do nothing again, so that we can fall back to the LRU-list based page
 granularity reclamation. ::
 
-    # cd /sys/modules/damon_reclaim/parameters
+    # cd /sys/module/damon_reclaim/parameters
     # echo 30000000 > min_age
     # echo $((1 * 1024 * 1024 * 1024)) > quota_sz
     # echo 1000 > quota_reset_interval_ms
@@ -268,4 +271,4 @@ granularity reclamation. ::
 
 .. [1] https://research.google/pubs/pub48551/
 .. [2] https://lwn.net/Articles/787611/
-.. [3] https://www.kernel.org/doc/html/latest/vm/free_page_reporting.html
+.. [3] https://www.kernel.org/doc/html/latest/mm/free_page_reporting.html

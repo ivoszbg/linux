@@ -1,15 +1,5 @@
-/*
- * Copyright (C) 2017 Broadcom
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License as
- * published by the Free Software Foundation version 2.
- *
- * This program is distributed "as is" WITHOUT ANY WARRANTY of any
- * kind, whether express or implied; without even the implied warranty
- * of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- */
+// SPDX-License-Identifier: GPL-2.0-only
+// Copyright (C) 2017 Broadcom
 
 /*
  * Broadcom FlexRM Mailbox Driver
@@ -632,15 +622,15 @@ static int flexrm_spu_dma_map(struct device *dev, struct brcm_message *msg)
 
 	rc = dma_map_sg(dev, msg->spu.src, sg_nents(msg->spu.src),
 			DMA_TO_DEVICE);
-	if (rc < 0)
-		return rc;
+	if (!rc)
+		return -EIO;
 
 	rc = dma_map_sg(dev, msg->spu.dst, sg_nents(msg->spu.dst),
 			DMA_FROM_DEVICE);
-	if (rc < 0) {
+	if (!rc) {
 		dma_unmap_sg(dev, msg->spu.src, sg_nents(msg->spu.src),
 			     DMA_TO_DEVICE);
-		return rc;
+		return -EIO;
 	}
 
 	return 0;
@@ -1511,16 +1501,12 @@ static int flexrm_mbox_probe(struct platform_device *pdev)
 	mbox->dev = dev;
 	platform_set_drvdata(pdev, mbox);
 
-	/* Get resource for registers */
-	iomem = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	/* Get resource for registers and map registers of all rings */
+	mbox->regs = devm_platform_get_and_ioremap_resource(pdev, 0, &iomem);
 	if (!iomem || (resource_size(iomem) < RING_REGS_SIZE)) {
 		ret = -ENODEV;
 		goto fail;
-	}
-
-	/* Map registers of all rings */
-	mbox->regs = devm_ioremap_resource(&pdev->dev, iomem);
-	if (IS_ERR(mbox->regs)) {
+	} else if (IS_ERR(mbox->regs)) {
 		ret = PTR_ERR(mbox->regs);
 		goto fail;
 	}

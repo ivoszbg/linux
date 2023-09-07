@@ -276,6 +276,15 @@ Description:
 
 		RW
 
+What:		/sys/class/hwmon/hwmonX/fanY_fault
+Description:
+		Reports if a fan has reported failure.
+
+		- 1: Failed
+		- 0: Ok
+
+		RO
+
 What:		/sys/class/hwmon/hwmonX/pwmY
 Description:
 		Pulse width modulation fan control.
@@ -936,5 +945,14 @@ Description:
 
 		- 0: disable
 		- 1: enable
+
+		RW
+
+What:		/sys/class/hwmon/hwmonX/device/pec
+Description:
+		PEC support on I2C devices
+
+		- 0, off, n: disable
+		- 1, on, y: enable
 
 		RW

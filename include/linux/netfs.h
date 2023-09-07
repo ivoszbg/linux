@@ -17,6 +17,7 @@
 #include <linux/workqueue.h>
 #include <linux/fs.h>
 #include <linux/pagemap.h>
+#include <linux/uio.h>
 
 enum netfs_sreq_ref_trace;
 
@@ -214,7 +215,7 @@ struct netfs_request_ops {
 	void (*issue_read)(struct netfs_io_subrequest *subreq);
 	bool (*is_still_valid)(struct netfs_io_request *rreq);
 	int (*check_write_begin)(struct file *file, loff_t pos, unsigned len,
-				 struct folio *folio, void **_fsdata);
+				 struct folio **foliop, void **_fsdata);
 	void (*done)(struct netfs_io_request *rreq);
 };
 
@@ -267,6 +268,14 @@ struct netfs_cache_ops {
 			     loff_t *_start, size_t *_len, loff_t i_size,
 			     bool no_space_allocated_yet);
 
+	/* Prepare an on-demand read operation, shortening it to a cached/uncached
+	 * boundary as appropriate.
+	 */
+	enum netfs_io_source (*prepare_ondemand_read)(struct netfs_cache_resources *cres,
+						      loff_t start, size_t *_len,
+						      loff_t i_size,
+						      unsigned long *_flags, ino_t ino);
+
 	/* Query the occupancy of the cache in a region, returning where the
 	 * next chunk of data starts and how long it is.
 	 */
@@ -276,19 +285,21 @@ struct netfs_cache_ops {
 };
 
 struct readahead_control;
-extern void netfs_readahead(struct readahead_control *);
+void netfs_readahead(struct readahead_control *);
 int netfs_read_folio(struct file *, struct folio *);
-extern int netfs_write_begin(struct netfs_inode *,
-			     struct file *, struct address_space *,
-			     loff_t, unsigned int, struct folio **,
-			     void **);
+int netfs_write_begin(struct netfs_inode *, struct file *,
+		struct address_space *, loff_t pos, unsigned int len,
+		struct folio **, void **fsdata);
 
-extern void netfs_subreq_terminated(struct netfs_io_subrequest *, ssize_t, bool);
-extern void netfs_get_subrequest(struct netfs_io_subrequest *subreq,
-				 enum netfs_sreq_ref_trace what);
-extern void netfs_put_subrequest(struct netfs_io_subrequest *subreq,
-				 bool was_async, enum netfs_sreq_ref_trace what);
-extern void netfs_stats_show(struct seq_file *);
+void netfs_subreq_terminated(struct netfs_io_subrequest *, ssize_t, bool);
+void netfs_get_subrequest(struct netfs_io_subrequest *subreq,
+			  enum netfs_sreq_ref_trace what);
+void netfs_put_subrequest(struct netfs_io_subrequest *subreq,
+			  bool was_async, enum netfs_sreq_ref_trace what);
+void netfs_stats_show(struct seq_file *);
+ssize_t netfs_extract_user_iter(struct iov_iter *orig, size_t orig_len,
+				struct iov_iter *new,
+				iov_iter_extraction_t extraction_flags);
 
 /**
  * netfs_inode - Get the netfs inode context from the inode

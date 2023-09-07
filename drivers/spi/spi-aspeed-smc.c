@@ -295,8 +295,8 @@ static const struct aspeed_spi_data ast2400_spi_data;
 
 static int do_aspeed_spi_exec_op(struct spi_mem *mem, const struct spi_mem_op *op)
 {
-	struct aspeed_spi *aspi = spi_controller_get_devdata(mem->spi->master);
-	struct aspeed_spi_chip *chip = &aspi->chips[mem->spi->chip_select];
+	struct aspeed_spi *aspi = spi_controller_get_devdata(mem->spi->controller);
+	struct aspeed_spi_chip *chip = &aspi->chips[spi_get_chipselect(mem->spi, 0)];
 	u32 addr_mode, addr_mode_backup;
 	u32 ctl_val;
 	int ret = 0;
@@ -374,10 +374,11 @@ static int aspeed_spi_exec_op(struct spi_mem *mem, const struct spi_mem_op *op)
 
 static const char *aspeed_spi_get_name(struct spi_mem *mem)
 {
-	struct aspeed_spi *aspi = spi_controller_get_devdata(mem->spi->master);
+	struct aspeed_spi *aspi = spi_controller_get_devdata(mem->spi->controller);
 	struct device *dev = aspi->dev;
 
-	return devm_kasprintf(dev, GFP_KERNEL, "%s.%d", dev_name(dev), mem->spi->chip_select);
+	return devm_kasprintf(dev, GFP_KERNEL, "%s.%d", dev_name(dev),
+			      spi_get_chipselect(mem->spi, 0));
 }
 
 struct aspeed_spi_window {
@@ -398,7 +399,7 @@ static void aspeed_spi_get_windows(struct aspeed_spi *aspi,
 		windows[cs].cs = cs;
 		windows[cs].size = data->segment_end(aspi, reg_val) -
 			data->segment_start(aspi, reg_val);
-		windows[cs].offset = cs ? windows[cs - 1].offset + windows[cs - 1].size : 0;
+		windows[cs].offset = data->segment_start(aspi, reg_val) - aspi->ahb_base_phy;
 		dev_vdbg(aspi->dev, "CE%d offset=0x%.8x size=0x%x\n", cs,
 			 windows[cs].offset, windows[cs].size);
 	}
@@ -552,11 +553,19 @@ static int aspeed_spi_do_calibration(struct aspeed_spi_chip *chip);
 
 static int aspeed_spi_dirmap_create(struct spi_mem_dirmap_desc *desc)
 {
-	struct aspeed_spi *aspi = spi_controller_get_devdata(desc->mem->spi->master);
-	struct aspeed_spi_chip *chip = &aspi->chips[desc->mem->spi->chip_select];
+	struct aspeed_spi *aspi = spi_controller_get_devdata(desc->mem->spi->controller);
+	struct aspeed_spi_chip *chip = &aspi->chips[spi_get_chipselect(desc->mem->spi, 0)];
 	struct spi_mem_op *op = &desc->info.op_tmpl;
 	u32 ctl_val;
 	int ret = 0;
+
+	dev_dbg(aspi->dev,
+		"CE%d %s dirmap [ 0x%.8llx - 0x%.8llx ] OP %#x mode:%d.%d.%d.%d naddr:%#x ndummies:%#x\n",
+		chip->cs, op->data.dir == SPI_MEM_DATA_IN ? "read" : "write",
+		desc->info.offset, desc->info.offset + desc->info.length,
+		op->cmd.opcode, op->cmd.buswidth, op->addr.buswidth,
+		op->dummy.buswidth, op->data.buswidth,
+		op->addr.nbytes, op->dummy.nbytes);
 
 	chip->clk_freq = desc->mem->spi->max_speed_hz;
 
@@ -574,8 +583,10 @@ static int aspeed_spi_dirmap_create(struct spi_mem_dirmap_desc *desc)
 	ctl_val = readl(chip->ctl) & ~CTRL_IO_CMD_MASK;
 	ctl_val |= aspeed_spi_get_io_mode(op) |
 		op->cmd.opcode << CTRL_COMMAND_SHIFT |
-		CTRL_IO_DUMMY_SET(op->dummy.nbytes / op->dummy.buswidth) |
 		CTRL_IO_MODE_READ;
+
+	if (op->dummy.nbytes)
+		ctl_val |= CTRL_IO_DUMMY_SET(op->dummy.nbytes / op->dummy.buswidth);
 
 	/* Tune 4BYTE address mode */
 	if (op->addr.nbytes) {
@@ -609,8 +620,8 @@ static int aspeed_spi_dirmap_create(struct spi_mem_dirmap_desc *desc)
 static ssize_t aspeed_spi_dirmap_read(struct spi_mem_dirmap_desc *desc,
 				      u64 offset, size_t len, void *buf)
 {
-	struct aspeed_spi *aspi = spi_controller_get_devdata(desc->mem->spi->master);
-	struct aspeed_spi_chip *chip = &aspi->chips[desc->mem->spi->chip_select];
+	struct aspeed_spi *aspi = spi_controller_get_devdata(desc->mem->spi->controller);
+	struct aspeed_spi_chip *chip = &aspi->chips[spi_get_chipselect(desc->mem->spi, 0)];
 
 	/* Switch to USER command mode if mapping window is too small */
 	if (chip->ahb_window_size < offset + len) {
@@ -658,9 +669,9 @@ static void aspeed_spi_chip_enable(struct aspeed_spi *aspi, unsigned int cs, boo
 
 static int aspeed_spi_setup(struct spi_device *spi)
 {
-	struct aspeed_spi *aspi = spi_controller_get_devdata(spi->master);
+	struct aspeed_spi *aspi = spi_controller_get_devdata(spi->controller);
 	const struct aspeed_spi_data *data = aspi->data;
-	unsigned int cs = spi->chip_select;
+	unsigned int cs = spi_get_chipselect(spi, 0);
 	struct aspeed_spi_chip *chip = &aspi->chips[cs];
 
 	chip->aspi = aspi;
@@ -686,8 +697,8 @@ static int aspeed_spi_setup(struct spi_device *spi)
 
 static void aspeed_spi_cleanup(struct spi_device *spi)
 {
-	struct aspeed_spi *aspi = spi_controller_get_devdata(spi->master);
-	unsigned int cs = spi->chip_select;
+	struct aspeed_spi *aspi = spi_controller_get_devdata(spi->controller);
+	unsigned int cs = spi_get_chipselect(spi, 0);
 
 	aspeed_spi_chip_enable(aspi, cs, false);
 
@@ -715,7 +726,7 @@ static int aspeed_spi_probe(struct platform_device *pdev)
 	if (!data)
 		return -ENODEV;
 
-	ctlr = devm_spi_alloc_master(dev, sizeof(*aspi));
+	ctlr = devm_spi_alloc_host(dev, sizeof(*aspi));
 	if (!ctlr)
 		return -ENOMEM;
 
@@ -724,15 +735,11 @@ static int aspeed_spi_probe(struct platform_device *pdev)
 	aspi->data = data;
 	aspi->dev = dev;
 
-	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	aspi->regs = devm_ioremap_resource(dev, res);
-	if (IS_ERR(aspi->regs)) {
-		dev_err(dev, "missing AHB register window\n");
+	aspi->regs = devm_platform_ioremap_resource(pdev, 0);
+	if (IS_ERR(aspi->regs))
 		return PTR_ERR(aspi->regs);
-	}
 
-	res = platform_get_resource(pdev, IORESOURCE_MEM, 1);
-	aspi->ahb_base = devm_ioremap_resource(dev, res);
+	aspi->ahb_base = devm_platform_get_and_ioremap_resource(pdev, 1, &res);
 	if (IS_ERR(aspi->ahb_base)) {
 		dev_err(dev, "missing AHB mapping window\n");
 		return PTR_ERR(aspi->ahb_base);
@@ -781,13 +788,12 @@ disable_clk:
 	return ret;
 }
 
-static int aspeed_spi_remove(struct platform_device *pdev)
+static void aspeed_spi_remove(struct platform_device *pdev)
 {
 	struct aspeed_spi *aspi = platform_get_drvdata(pdev);
 
 	aspeed_spi_enable(aspi, false);
 	clk_disable_unprepare(aspi->clk);
-	return 0;
 }
 
 /*
@@ -1155,7 +1161,7 @@ static const struct aspeed_spi_data ast2500_spi_data = {
 static const struct aspeed_spi_data ast2600_fmc_data = {
 	.max_cs	       = 3,
 	.hastype       = false,
-	.mode_bits     = SPI_RX_QUAD | SPI_RX_QUAD,
+	.mode_bits     = SPI_RX_QUAD | SPI_TX_QUAD,
 	.we0	       = 16,
 	.ctl0	       = CE0_CTRL_REG,
 	.timing	       = CE0_TIMING_COMPENSATION_REG,
@@ -1170,7 +1176,7 @@ static const struct aspeed_spi_data ast2600_fmc_data = {
 static const struct aspeed_spi_data ast2600_spi_data = {
 	.max_cs	       = 2,
 	.hastype       = false,
-	.mode_bits     = SPI_RX_QUAD | SPI_RX_QUAD,
+	.mode_bits     = SPI_RX_QUAD | SPI_TX_QUAD,
 	.we0	       = 16,
 	.ctl0	       = CE0_CTRL_REG,
 	.timing	       = CE0_TIMING_COMPENSATION_REG,
@@ -1195,7 +1201,7 @@ MODULE_DEVICE_TABLE(of, aspeed_spi_matches);
 
 static struct platform_driver aspeed_spi_driver = {
 	.probe			= aspeed_spi_probe,
-	.remove			= aspeed_spi_remove,
+	.remove_new		= aspeed_spi_remove,
 	.driver	= {
 		.name		= DEVICE_NAME,
 		.of_match_table = aspeed_spi_matches,

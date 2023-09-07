@@ -75,48 +75,58 @@ int kvm_arch_vcpu_run_map_fp(struct kvm_vcpu *vcpu)
 void kvm_arch_vcpu_load_fp(struct kvm_vcpu *vcpu)
 {
 	BUG_ON(!current->mm);
-	BUG_ON(test_thread_flag(TIF_SVE));
 
-	vcpu->arch.flags &= ~KVM_ARM64_FP_ENABLED;
-	vcpu->arch.flags |= KVM_ARM64_FP_HOST;
+	if (!system_supports_fpsimd())
+		return;
 
-	vcpu->arch.flags &= ~KVM_ARM64_HOST_SVE_ENABLED;
-	if (read_sysreg(cpacr_el1) & CPACR_EL1_ZEN_EL0EN)
-		vcpu->arch.flags |= KVM_ARM64_HOST_SVE_ENABLED;
+	fpsimd_kvm_prepare();
 
 	/*
-	 * We don't currently support SME guests but if we leave
-	 * things in streaming mode then when the guest starts running
-	 * FPSIMD or SVE code it may generate SME traps so as a
-	 * special case if we are in streaming mode we force the host
-	 * state to be saved now and exit streaming mode so that we
-	 * don't have to handle any SME traps for valid guest
-	 * operations. Do this for ZA as well for now for simplicity.
+	 * We will check TIF_FOREIGN_FPSTATE just before entering the
+	 * guest in kvm_arch_vcpu_ctxflush_fp() and override this to
+	 * FP_STATE_FREE if the flag set.
 	 */
-	if (system_supports_sme()) {
-		vcpu->arch.flags &= ~KVM_ARM64_HOST_SME_ENABLED;
-		if (read_sysreg(cpacr_el1) & CPACR_EL1_SMEN_EL0EN)
-			vcpu->arch.flags |= KVM_ARM64_HOST_SME_ENABLED;
+	vcpu->arch.fp_state = FP_STATE_HOST_OWNED;
 
-		if (read_sysreg_s(SYS_SVCR) &
-		    (SVCR_SM_MASK | SVCR_ZA_MASK)) {
-			vcpu->arch.flags &= ~KVM_ARM64_FP_HOST;
+	vcpu_clear_flag(vcpu, HOST_SVE_ENABLED);
+	if (read_sysreg(cpacr_el1) & CPACR_EL1_ZEN_EL0EN)
+		vcpu_set_flag(vcpu, HOST_SVE_ENABLED);
+
+	if (system_supports_sme()) {
+		vcpu_clear_flag(vcpu, HOST_SME_ENABLED);
+		if (read_sysreg(cpacr_el1) & CPACR_EL1_SMEN_EL0EN)
+			vcpu_set_flag(vcpu, HOST_SME_ENABLED);
+
+		/*
+		 * If PSTATE.SM is enabled then save any pending FP
+		 * state and disable PSTATE.SM. If we leave PSTATE.SM
+		 * enabled and the guest does not enable SME via
+		 * CPACR_EL1.SMEN then operations that should be valid
+		 * may generate SME traps from EL1 to EL1 which we
+		 * can't intercept and which would confuse the guest.
+		 *
+		 * Do the same for PSTATE.ZA in the case where there
+		 * is state in the registers which has not already
+		 * been saved, this is very unlikely to happen.
+		 */
+		if (read_sysreg_s(SYS_SVCR) & (SVCR_SM_MASK | SVCR_ZA_MASK)) {
+			vcpu->arch.fp_state = FP_STATE_FREE;
 			fpsimd_save_and_flush_cpu_state();
 		}
 	}
 }
 
 /*
- * Called just before entering the guest once we are no longer
- * preemptable. Syncs the host's TIF_FOREIGN_FPSTATE with the KVM
- * mirror of the flag used by the hypervisor.
+ * Called just before entering the guest once we are no longer preemptable
+ * and interrupts are disabled. If we have managed to run anything using
+ * FP while we were preemptible (such as off the back of an interrupt),
+ * then neither the host nor the guest own the FP hardware (and it was the
+ * responsibility of the code that used FP to save the existing state).
  */
 void kvm_arch_vcpu_ctxflush_fp(struct kvm_vcpu *vcpu)
 {
 	if (test_thread_flag(TIF_FOREIGN_FPSTATE))
-		vcpu->arch.flags |= KVM_ARM64_FP_FOREIGN_FPSTATE;
-	else
-		vcpu->arch.flags &= ~KVM_ARM64_FP_FOREIGN_FPSTATE;
+		vcpu->arch.fp_state = FP_STATE_FREE;
 }
 
 /*
@@ -128,20 +138,31 @@ void kvm_arch_vcpu_ctxflush_fp(struct kvm_vcpu *vcpu)
  */
 void kvm_arch_vcpu_ctxsync_fp(struct kvm_vcpu *vcpu)
 {
+	struct cpu_fp_state fp_state;
+
 	WARN_ON_ONCE(!irqs_disabled());
 
-	if (vcpu->arch.flags & KVM_ARM64_FP_ENABLED) {
+	if (vcpu->arch.fp_state == FP_STATE_GUEST_OWNED) {
+
 		/*
 		 * Currently we do not support SME guests so SVCR is
 		 * always 0 and we just need a variable to point to.
 		 */
-		fpsimd_bind_state_to_cpu(&vcpu->arch.ctxt.fp_regs,
-					 vcpu->arch.sve_state,
-					 vcpu->arch.sve_max_vl,
-					 NULL, 0, &vcpu->arch.svcr);
+		fp_state.st = &vcpu->arch.ctxt.fp_regs;
+		fp_state.sve_state = vcpu->arch.sve_state;
+		fp_state.sve_vl = vcpu->arch.sve_max_vl;
+		fp_state.sme_state = NULL;
+		fp_state.svcr = &vcpu->arch.svcr;
+		fp_state.fp_type = &vcpu->arch.fp_type;
+
+		if (vcpu_has_sve(vcpu))
+			fp_state.to_save = FP_STATE_SVE;
+		else
+			fp_state.to_save = FP_STATE_FPSIMD;
+
+		fpsimd_bind_state_to_cpu(&fp_state);
 
 		clear_thread_flag(TIF_FOREIGN_FPSTATE);
-		update_thread_flag(TIF_SVE, vcpu_has_sve(vcpu));
 	}
 }
 
@@ -159,11 +180,11 @@ void kvm_arch_vcpu_put_fp(struct kvm_vcpu *vcpu)
 
 	/*
 	 * If we have VHE then the Hyp code will reset CPACR_EL1 to
-	 * CPACR_EL1_DEFAULT and we need to reenable SME.
+	 * the default value and we need to reenable SME.
 	 */
 	if (has_vhe() && system_supports_sme()) {
 		/* Also restore EL0 state seen on entry */
-		if (vcpu->arch.flags & KVM_ARM64_HOST_SME_ENABLED)
+		if (vcpu_get_flag(vcpu, HOST_SME_ENABLED))
 			sysreg_clear_set(CPACR_EL1, 0,
 					 CPACR_EL1_SMEN_EL0EN |
 					 CPACR_EL1_SMEN_EL1EN);
@@ -171,9 +192,10 @@ void kvm_arch_vcpu_put_fp(struct kvm_vcpu *vcpu)
 			sysreg_clear_set(CPACR_EL1,
 					 CPACR_EL1_SMEN_EL0EN,
 					 CPACR_EL1_SMEN_EL1EN);
+		isb();
 	}
 
-	if (vcpu->arch.flags & KVM_ARM64_FP_ENABLED) {
+	if (vcpu->arch.fp_state == FP_STATE_GUEST_OWNED) {
 		if (vcpu_has_sve(vcpu)) {
 			__vcpu_sys_reg(vcpu, ZCR_EL1) = read_sysreg_el1(SYS_ZCR);
 
@@ -188,17 +210,15 @@ void kvm_arch_vcpu_put_fp(struct kvm_vcpu *vcpu)
 		/*
 		 * The FPSIMD/SVE state in the CPU has not been touched, and we
 		 * have SVE (and VHE): CPACR_EL1 (alias CPTR_EL2) has been
-		 * reset to CPACR_EL1_DEFAULT by the Hyp code, disabling SVE
+		 * reset by kvm_reset_cptr_el2() in the Hyp code, disabling SVE
 		 * for EL0.  To avoid spurious traps, restore the trap state
 		 * seen by kvm_arch_vcpu_load_fp():
 		 */
-		if (vcpu->arch.flags & KVM_ARM64_HOST_SVE_ENABLED)
+		if (vcpu_get_flag(vcpu, HOST_SVE_ENABLED))
 			sysreg_clear_set(CPACR_EL1, 0, CPACR_EL1_ZEN_EL0EN);
 		else
 			sysreg_clear_set(CPACR_EL1, CPACR_EL1_ZEN_EL0EN, 0);
 	}
-
-	update_thread_flag(TIF_SVE, 0);
 
 	local_irq_restore(flags);
 }

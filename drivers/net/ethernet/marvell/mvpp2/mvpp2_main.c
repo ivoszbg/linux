@@ -24,7 +24,6 @@
 #include <linux/of_mdio.h>
 #include <linux/of_net.h>
 #include <linux/of_address.h>
-#include <linux/of_device.h>
 #include <linux/phy.h>
 #include <linux/phylink.h>
 #include <linux/phy/phy.h>
@@ -36,6 +35,7 @@
 #include <uapi/linux/ppp_defs.h>
 #include <net/ip.h>
 #include <net/ipv6.h>
+#include <net/page_pool/helpers.h>
 #include <net/tso.h>
 #include <linux/bpf_trace.h>
 
@@ -2008,7 +2008,7 @@ mvpp2_get_xdp_stats(struct mvpp2_port *port, struct mvpp2_pcpu_stats *xdp_stats)
 
 		cpu_stats = per_cpu_ptr(port->stats, cpu);
 		do {
-			start = u64_stats_fetch_begin_irq(&cpu_stats->syncp);
+			start = u64_stats_fetch_begin(&cpu_stats->syncp);
 			xdp_redirect = cpu_stats->xdp_redirect;
 			xdp_pass   = cpu_stats->xdp_pass;
 			xdp_drop = cpu_stats->xdp_drop;
@@ -2016,7 +2016,7 @@ mvpp2_get_xdp_stats(struct mvpp2_port *port, struct mvpp2_pcpu_stats *xdp_stats)
 			xdp_xmit_err   = cpu_stats->xdp_xmit_err;
 			xdp_tx   = cpu_stats->xdp_tx;
 			xdp_tx_err   = cpu_stats->xdp_tx_err;
-		} while (u64_stats_fetch_retry_irq(&cpu_stats->syncp, start));
+		} while (u64_stats_fetch_retry(&cpu_stats->syncp, start));
 
 		xdp_stats->xdp_redirect += xdp_redirect;
 		xdp_stats->xdp_pass   += xdp_pass;
@@ -4996,6 +4996,14 @@ static int mvpp2_bm_switch_buffers(struct mvpp2 *priv, bool percpu)
 
 	for (i = 0; i < priv->port_count; i++) {
 		port = priv->port_list[i];
+		if (percpu && port->ntxqs >= num_possible_cpus() * 2)
+			xdp_set_features_flag(port->dev,
+					      NETDEV_XDP_ACT_BASIC |
+					      NETDEV_XDP_ACT_REDIRECT |
+					      NETDEV_XDP_ACT_NDO_XMIT);
+		else
+			xdp_clear_features_flag(port->dev);
+
 		mvpp2_swf_bm_pool_init(port);
 		if (status[i])
 			mvpp2_open(port->dev);
@@ -5115,12 +5123,12 @@ mvpp2_get_stats64(struct net_device *dev, struct rtnl_link_stats64 *stats)
 
 		cpu_stats = per_cpu_ptr(port->stats, cpu);
 		do {
-			start = u64_stats_fetch_begin_irq(&cpu_stats->syncp);
+			start = u64_stats_fetch_begin(&cpu_stats->syncp);
 			rx_packets = cpu_stats->rx_packets;
 			rx_bytes   = cpu_stats->rx_bytes;
 			tx_packets = cpu_stats->tx_packets;
 			tx_bytes   = cpu_stats->tx_bytes;
-		} while (u64_stats_fetch_retry_irq(&cpu_stats->syncp, start));
+		} while (u64_stats_fetch_retry(&cpu_stats->syncp, start));
 
 		stats->rx_packets += rx_packets;
 		stats->rx_bytes   += rx_bytes;
@@ -5425,11 +5433,11 @@ mvpp2_ethtool_get_coalesce(struct net_device *dev,
 static void mvpp2_ethtool_get_drvinfo(struct net_device *dev,
 				      struct ethtool_drvinfo *drvinfo)
 {
-	strlcpy(drvinfo->driver, MVPP2_DRIVER_NAME,
+	strscpy(drvinfo->driver, MVPP2_DRIVER_NAME,
 		sizeof(drvinfo->driver));
-	strlcpy(drvinfo->version, MVPP2_DRIVER_VERSION,
+	strscpy(drvinfo->version, MVPP2_DRIVER_VERSION,
 		sizeof(drvinfo->version));
-	strlcpy(drvinfo->bus_info, dev_name(&dev->dev),
+	strscpy(drvinfo->bus_info, dev_name(&dev->dev),
 		sizeof(drvinfo->bus_info));
 }
 
@@ -5770,8 +5778,7 @@ static int mvpp2_simple_queue_vectors_init(struct mvpp2_port *port,
 	v->irq = irq_of_parse_and_map(port_node, 0);
 	if (v->irq <= 0)
 		return -EINVAL;
-	netif_napi_add(port->dev, &v->napi, mvpp2_poll,
-		       NAPI_POLL_WEIGHT);
+	netif_napi_add(port->dev, &v->napi, mvpp2_poll);
 
 	port->nqvecs = 1;
 
@@ -5831,8 +5838,7 @@ static int mvpp2_multi_queue_vectors_init(struct mvpp2_port *port,
 			goto err;
 		}
 
-		netif_napi_add(port->dev, &v->napi, mvpp2_poll,
-			       NAPI_POLL_WEIGHT);
+		netif_napi_add(port->dev, &v->napi, mvpp2_poll);
 	}
 
 	return 0;
@@ -6083,18 +6089,19 @@ static bool mvpp2_port_has_irqs(struct mvpp2 *priv,
 	return true;
 }
 
-static void mvpp2_port_copy_mac_addr(struct net_device *dev, struct mvpp2 *priv,
-				     struct fwnode_handle *fwnode,
-				     char **mac_from)
+static int mvpp2_port_copy_mac_addr(struct net_device *dev, struct mvpp2 *priv,
+				    struct fwnode_handle *fwnode,
+				    char **mac_from)
 {
 	struct mvpp2_port *port = netdev_priv(dev);
 	char hw_mac_addr[ETH_ALEN] = {0};
 	char fw_mac_addr[ETH_ALEN];
+	int ret;
 
 	if (!fwnode_get_mac_address(fwnode, fw_mac_addr)) {
 		*mac_from = "firmware node";
 		eth_hw_addr_set(dev, fw_mac_addr);
-		return;
+		return 0;
 	}
 
 	if (priv->hw_version == MVPP21) {
@@ -6102,12 +6109,24 @@ static void mvpp2_port_copy_mac_addr(struct net_device *dev, struct mvpp2 *priv,
 		if (is_valid_ether_addr(hw_mac_addr)) {
 			*mac_from = "hardware";
 			eth_hw_addr_set(dev, hw_mac_addr);
-			return;
+			return 0;
 		}
+	}
+
+	/* Only valid on OF enabled platforms */
+	ret = of_get_mac_address_nvmem(to_of_node(fwnode), fw_mac_addr);
+	if (ret == -EPROBE_DEFER)
+		return ret;
+	if (!ret) {
+		*mac_from = "nvmem cell";
+		eth_hw_addr_set(dev, fw_mac_addr);
+		return 0;
 	}
 
 	*mac_from = "random";
 	eth_hw_addr_random(dev);
+
+	return 0;
 }
 
 static struct mvpp2_port *mvpp2_phylink_to_port(struct phylink_config *config)
@@ -6149,8 +6168,7 @@ static void mvpp2_xlg_pcs_get_state(struct phylink_pcs *pcs,
 		state->pause |= MLO_PAUSE_RX;
 }
 
-static int mvpp2_xlg_pcs_config(struct phylink_pcs *pcs,
-				unsigned int mode,
+static int mvpp2_xlg_pcs_config(struct phylink_pcs *pcs, unsigned int neg_mode,
 				phy_interface_t interface,
 				const unsigned long *advertising,
 				bool permit_pause_to_mac)
@@ -6213,7 +6231,7 @@ static void mvpp2_gmac_pcs_get_state(struct phylink_pcs *pcs,
 		state->pause |= MLO_PAUSE_TX;
 }
 
-static int mvpp2_gmac_pcs_config(struct phylink_pcs *pcs, unsigned int mode,
+static int mvpp2_gmac_pcs_config(struct phylink_pcs *pcs, unsigned int neg_mode,
 				 phy_interface_t interface,
 				 const unsigned long *advertising,
 				 bool permit_pause_to_mac)
@@ -6227,7 +6245,7 @@ static int mvpp2_gmac_pcs_config(struct phylink_pcs *pcs, unsigned int mode,
 	       MVPP2_GMAC_FLOW_CTRL_AUTONEG |
 	       MVPP2_GMAC_AN_DUPLEX_EN;
 
-	if (phylink_autoneg_inband(mode)) {
+	if (neg_mode == PHYLINK_PCS_NEG_INBAND_ENABLED) {
 		mask |= MVPP2_GMAC_CONFIG_MII_SPEED |
 			MVPP2_GMAC_CONFIG_GMII_SPEED |
 			MVPP2_GMAC_CONFIG_FULL_DUPLEX;
@@ -6605,7 +6623,6 @@ static void mvpp2_mac_link_down(struct phylink_config *config,
 }
 
 static const struct phylink_mac_ops mvpp2_phylink_ops = {
-	.validate = phylink_generic_validate,
 	.mac_select_pcs = mvpp2_select_pcs,
 	.mac_prepare = mvpp2_mac_prepare,
 	.mac_config = mvpp2_mac_config,
@@ -6631,8 +6648,9 @@ static void mvpp2_acpi_start(struct mvpp2_port *port)
 	mvpp2_mac_prepare(&port->phylink_config, MLO_AN_INBAND,
 			  port->phy_interface);
 	mvpp2_mac_config(&port->phylink_config, MLO_AN_INBAND, &state);
-	pcs->ops->pcs_config(pcs, MLO_AN_INBAND, port->phy_interface,
-			     state.advertising, false);
+	pcs->ops->pcs_config(pcs, PHYLINK_PCS_NEG_INBAND_ENABLED,
+			     port->phy_interface, state.advertising,
+			     false);
 	mvpp2_mac_finish(&port->phylink_config, MLO_AN_INBAND,
 			 port->phy_interface);
 	mvpp2_mac_link_up(&port->phylink_config, NULL,
@@ -6811,7 +6829,9 @@ static int mvpp2_port_probe(struct platform_device *pdev,
 	mutex_init(&port->gather_stats_lock);
 	INIT_DELAYED_WORK(&port->stats_work, mvpp2_gather_hw_statistics);
 
-	mvpp2_port_copy_mac_addr(dev, priv, port_fwnode, &mac_from);
+	err = mvpp2_port_copy_mac_addr(dev, priv, port_fwnode, &mac_from);
+	if (err < 0)
+		goto err_free_stats;
 
 	port->tx_ring_size = MVPP2_MAX_TXD_DFLT;
 	port->rx_ring_size = MVPP2_MAX_RXD_DFLT;
@@ -6859,9 +6879,14 @@ static int mvpp2_port_probe(struct platform_device *pdev,
 
 	if (!port->priv->percpu_pools)
 		mvpp2_set_hw_csum(port, port->pool_long->id);
+	else if (port->ntxqs >= num_possible_cpus() * 2)
+		dev->xdp_features = NETDEV_XDP_ACT_BASIC |
+				    NETDEV_XDP_ACT_REDIRECT |
+				    NETDEV_XDP_ACT_NDO_XMIT;
 
 	dev->vlan_features |= features;
 	netif_set_tso_max_segs(dev, MVPP2_MAX_TSO_SEGS);
+
 	dev->priv_flags |= IFF_UNICAST_FLT;
 
 	/* MTU range: 68 - 9704 */
@@ -6871,7 +6896,9 @@ static int mvpp2_port_probe(struct platform_device *pdev,
 	dev->dev.of_node = port_node;
 
 	port->pcs_gmac.ops = &mvpp2_phylink_gmac_pcs_ops;
+	port->pcs_gmac.neg_mode = true;
 	port->pcs_xlg.ops = &mvpp2_phylink_xlg_pcs_ops;
+	port->pcs_xlg.neg_mode = true;
 
 	if (!mvpp2_use_acpi_compat_mode(port_fwnode)) {
 		port->phylink_config.dev = &dev->dev;
@@ -7352,6 +7379,7 @@ static int mvpp2_get_sram(struct platform_device *pdev,
 			  struct mvpp2 *priv)
 {
 	struct resource *res;
+	void __iomem *base;
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 2);
 	if (!res) {
@@ -7362,9 +7390,12 @@ static int mvpp2_get_sram(struct platform_device *pdev,
 		return 0;
 	}
 
-	priv->cm3_base = devm_ioremap_resource(&pdev->dev, res);
+	base = devm_ioremap_resource(&pdev->dev, res);
+	if (IS_ERR(base))
+		return PTR_ERR(base);
 
-	return PTR_ERR_OR_ZERO(priv->cm3_base);
+	priv->cm3_base = base;
+	return 0;
 }
 
 static int mvpp2_probe(struct platform_device *pdev)
@@ -7706,7 +7737,18 @@ static struct platform_driver mvpp2_driver = {
 	},
 };
 
-module_platform_driver(mvpp2_driver);
+static int __init mvpp2_driver_init(void)
+{
+	return platform_driver_register(&mvpp2_driver);
+}
+module_init(mvpp2_driver_init);
+
+static void __exit mvpp2_driver_exit(void)
+{
+	platform_driver_unregister(&mvpp2_driver);
+	mvpp2_dbgfs_exit();
+}
+module_exit(mvpp2_driver_exit);
 
 MODULE_DESCRIPTION("Marvell PPv2 Ethernet Driver - www.marvell.com");
 MODULE_AUTHOR("Marcin Wojtas <mw@semihalf.com>");

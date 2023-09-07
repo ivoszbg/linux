@@ -24,6 +24,7 @@ struct xfs_ifork {
 	xfs_extnum_t		if_nextents;	/* # of extents in this fork */
 	short			if_broot_bytes;	/* bytes allocated for root */
 	int8_t			if_format;	/* format of this fork */
+	uint8_t			if_needextents;	/* extents have not been read */
 };
 
 /*
@@ -77,28 +78,8 @@ struct xfs_ifork {
 /*
  * Fork handling.
  */
-
-#define XFS_IFORK_Q(ip)			((ip)->i_forkoff != 0)
-#define XFS_IFORK_BOFF(ip)		((int)((ip)->i_forkoff << 3))
-
-#define XFS_IFORK_PTR(ip,w)		\
-	((w) == XFS_DATA_FORK ? \
-		&(ip)->i_df : \
-		((w) == XFS_ATTR_FORK ? \
-			(ip)->i_afp : \
-			(ip)->i_cowfp))
-#define XFS_IFORK_DSIZE(ip) \
-	(XFS_IFORK_Q(ip) ? XFS_IFORK_BOFF(ip) : XFS_LITINO((ip)->i_mount))
-#define XFS_IFORK_ASIZE(ip) \
-	(XFS_IFORK_Q(ip) ? XFS_LITINO((ip)->i_mount) - XFS_IFORK_BOFF(ip) : 0)
-#define XFS_IFORK_SIZE(ip,w) \
-	((w) == XFS_DATA_FORK ? \
-		XFS_IFORK_DSIZE(ip) : \
-		((w) == XFS_ATTR_FORK ? \
-			XFS_IFORK_ASIZE(ip) : \
-			0))
 #define XFS_IFORK_MAXEXT(ip, w) \
-	(XFS_IFORK_SIZE(ip, w) / sizeof(xfs_bmbt_rec_t))
+	(xfs_inode_fork_size(ip, w) / sizeof(xfs_bmbt_rec_t))
 
 static inline bool xfs_ifork_has_extents(struct xfs_ifork *ifp)
 {
@@ -179,8 +160,9 @@ xfs_dfork_nextents(
 	return 0;
 }
 
-struct xfs_ifork *xfs_ifork_alloc(enum xfs_dinode_fmt format,
-				xfs_extnum_t nextents);
+void xfs_ifork_zap_attr(struct xfs_inode *ip);
+void xfs_ifork_init_attr(struct xfs_inode *ip, enum xfs_dinode_fmt format,
+		xfs_extnum_t nextents);
 struct xfs_ifork *xfs_iext_state_to_fork(struct xfs_inode *ip, int state);
 
 int		xfs_iformat_data_fork(struct xfs_inode *, struct xfs_dinode *);
@@ -279,9 +261,10 @@ int xfs_iext_count_upgrade(struct xfs_trans *tp, struct xfs_inode *ip,
 		uint nr_to_add);
 
 /* returns true if the fork has extents but they are not read in yet. */
-static inline bool xfs_need_iread_extents(struct xfs_ifork *ifp)
+static inline bool xfs_need_iread_extents(const struct xfs_ifork *ifp)
 {
-	return ifp->if_format == XFS_DINODE_FMT_BTREE && ifp->if_height == 0;
+	/* see xfs_iformat_{data,attr}_fork() for needextents semantics */
+	return smp_load_acquire(&ifp->if_needextents) != 0;
 }
 
 #endif	/* __XFS_INODE_FORK_H__ */

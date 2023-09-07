@@ -18,7 +18,8 @@
 #include <linux/err.h>
 #include <linux/mfd/core.h>
 #include <linux/mfd/palmas.h>
-#include <linux/of_device.h>
+#include <linux/of.h>
+#include <linux/of_platform.h>
 
 static const struct regmap_config palmas_regmap_config[PALMAS_NUM_CLIENTS] = {
 	{
@@ -502,8 +503,7 @@ static const struct of_device_id of_palmas_match_tbl[] = {
 };
 MODULE_DEVICE_TABLE(of, of_palmas_match_tbl);
 
-static int palmas_i2c_probe(struct i2c_client *i2c,
-			    const struct i2c_device_id *id)
+static int palmas_i2c_probe(struct i2c_client *i2c)
 {
 	struct palmas *palmas;
 	struct palmas_platform_data *pdata;
@@ -512,7 +512,6 @@ static int palmas_i2c_probe(struct i2c_client *i2c,
 	int ret = 0, i;
 	unsigned int reg, addr;
 	int slave;
-	const struct of_device_id *match;
 
 	pdata = dev_get_platdata(&i2c->dev);
 
@@ -536,12 +535,7 @@ static int palmas_i2c_probe(struct i2c_client *i2c,
 	palmas->dev = &i2c->dev;
 	palmas->irq = i2c->irq;
 
-	match = of_match_device(of_palmas_match_tbl, &i2c->dev);
-
-	if (!match)
-		return -ENODATA;
-
-	driver_data = (struct palmas_driver_data *)match->data;
+	driver_data = (struct palmas_driver_data *) device_get_match_data(&i2c->dev);
 	palmas->features = *driver_data->features;
 
 	for (i = 0; i < PALMAS_NUM_CLIENTS; i++) {
@@ -700,7 +694,7 @@ err_i2c:
 	return ret;
 }
 
-static int palmas_i2c_remove(struct i2c_client *i2c)
+static void palmas_i2c_remove(struct i2c_client *i2c)
 {
 	struct palmas *palmas = i2c_get_clientdata(i2c);
 	int i;
@@ -716,8 +710,6 @@ static int palmas_i2c_remove(struct i2c_client *i2c)
 		pm_power_off = NULL;
 		palmas_dev = NULL;
 	}
-
-	return 0;
 }
 
 static const struct i2c_device_id palmas_i2c_id[] = {

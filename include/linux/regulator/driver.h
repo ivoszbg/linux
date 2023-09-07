@@ -292,11 +292,12 @@ enum regulator_type {
  * @ramp_delay: Time to settle down after voltage change (unit: uV/us)
  * @min_dropout_uV: The minimum dropout voltage this regulator can handle
  * @linear_ranges: A constant table of possible voltage ranges.
- * @linear_range_selectors: A constant table of voltage range selectors.
- *			    If pickable ranges are used each range must
- *			    have corresponding selector here.
+ * @linear_range_selectors_bitfield: A constant table of voltage range
+ *                                   selectors as bitfield values. If
+ *                                   pickable ranges are used each range
+ *                                   must have corresponding selector here.
  * @n_linear_ranges: Number of entries in the @linear_ranges (and in
- *		     linear_range_selectors if used) table(s).
+ *		     linear_range_selectors_bitfield if used) table(s).
  * @volt_table: Voltage mapping table (if table based mapping)
  * @curr_table: Current limit mapping table (if table based mapping)
  *
@@ -348,6 +349,7 @@ enum regulator_type {
  * @ramp_delay_table:	Table for mapping the regulator ramp-rate values. Values
  *			should be given in units of V/S (uV/uS). See the
  *			regulator_set_ramp_delay_regmap().
+ * @n_ramp_values:	number of elements at @ramp_delay_table.
  *
  * @enable_time: Time taken for initial enable of regulator (in uS).
  * @off_on_delay: guard time (in uS), before re-enabling a regulator
@@ -383,7 +385,7 @@ struct regulator_desc {
 	int min_dropout_uV;
 
 	const struct linear_range *linear_ranges;
-	const unsigned int *linear_range_selectors;
+	const unsigned int *linear_range_selectors_bitfield;
 
 	int n_linear_ranges;
 
@@ -686,7 +688,8 @@ static inline int regulator_err2notif(int err)
 
 
 struct regulator_dev *
-regulator_register(const struct regulator_desc *regulator_desc,
+regulator_register(struct device *dev,
+		   const struct regulator_desc *regulator_desc,
 		   const struct regulator_config *config);
 struct regulator_dev *
 devm_regulator_register(struct device *dev,
@@ -756,6 +759,8 @@ int regulator_set_current_limit_regmap(struct regulator_dev *rdev,
 				       int min_uA, int max_uA);
 int regulator_get_current_limit_regmap(struct regulator_dev *rdev);
 void *regulator_get_init_drvdata(struct regulator_init_data *reg_init_data);
+int regulator_find_closest_bigger(unsigned int target, const unsigned int *table,
+				  unsigned int num_sel, unsigned int *sel);
 int regulator_set_ramp_delay_regmap(struct regulator_dev *rdev, int ramp_delay);
 int regulator_sync_voltage_rdev(struct regulator_dev *rdev);
 

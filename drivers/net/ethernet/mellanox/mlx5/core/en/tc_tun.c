@@ -93,11 +93,11 @@ static int get_route_and_out_devs(struct mlx5e_priv *priv,
 	else
 		return -EOPNOTSUPP;
 
-	if (!(mlx5e_eswitch_rep(*out_dev) &&
-	      mlx5e_is_uplink_rep(netdev_priv(*out_dev))))
+	if (!mlx5e_eswitch_uplink_rep(*out_dev))
 		return -EOPNOTSUPP;
 
-	if (mlx5e_eswitch_uplink_rep(priv->netdev) && *out_dev != priv->netdev)
+	if (mlx5e_eswitch_uplink_rep(priv->netdev) && *out_dev != priv->netdev &&
+	    !mlx5_lag_is_mpesw(priv->mdev))
 		return -EOPNOTSUPP;
 
 	return 0;
@@ -506,7 +506,7 @@ int mlx5e_tc_tun_create_header_ipv6(struct mlx5e_priv *priv,
 	int err;
 
 	attr.ttl = tun_key->ttl;
-	attr.fl.fl6.flowlabel = ip6_make_flowinfo(RT_TOS(tun_key->tos), tun_key->label);
+	attr.fl.fl6.flowlabel = ip6_make_flowinfo(tun_key->tos, tun_key->label);
 	attr.fl.fl6.daddr = tun_key->u.ipv6.dst;
 	attr.fl.fl6.saddr = tun_key->u.ipv6.src;
 
@@ -620,7 +620,7 @@ int mlx5e_tc_tun_update_header_ipv6(struct mlx5e_priv *priv,
 
 	attr.ttl = tun_key->ttl;
 
-	attr.fl.fl6.flowlabel = ip6_make_flowinfo(RT_TOS(tun_key->tos), tun_key->label);
+	attr.fl.fl6.flowlabel = ip6_make_flowinfo(tun_key->tos, tun_key->label);
 	attr.fl.fl6.daddr = tun_key->u.ipv6.dst;
 	attr.fl.fl6.saddr = tun_key->u.ipv6.src;
 
@@ -745,8 +745,6 @@ int mlx5e_tc_tun_route_lookup(struct mlx5e_priv *priv,
 		if (err)
 			goto out;
 
-		esw_attr->rx_tun_attr->vni = MLX5_GET(fte_match_param, spec->match_value,
-						      misc_parameters.vxlan_vni);
 		esw_attr->rx_tun_attr->decap_vport = vport_num;
 	} else if (netif_is_ovs_master(attr.route_dev) && mlx5e_tc_int_port_supported(esw)) {
 		int_port = mlx5e_tc_int_port_get(mlx5e_get_int_port_priv(priv),

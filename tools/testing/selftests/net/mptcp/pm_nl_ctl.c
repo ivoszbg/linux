@@ -31,7 +31,7 @@
 
 static void syntax(char *argv[])
 {
-	fprintf(stderr, "%s add|get|set|del|flush|dump|accept [<args>]\n", argv[0]);
+	fprintf(stderr, "%s add|ann|rem|csf|dsf|get|set|del|flush|dump|events|listen|accept [<args>]\n", argv[0]);
 	fprintf(stderr, "\tadd [flags signal|subflow|backup|fullmesh] [id <nr>] [dev <name>] <ip>\n");
 	fprintf(stderr, "\tann <local-ip> id <local-id> token <token> [port <local-port>] [dev <name>]\n");
 	fprintf(stderr, "\trem id <local-id> token <token>\n");
@@ -39,7 +39,7 @@ static void syntax(char *argv[])
 	fprintf(stderr, "\tdsf lip <local-ip> lport <local-port> rip <remote-ip> rport <remote-port> token <token>\n");
 	fprintf(stderr, "\tdel <id> [<ip>]\n");
 	fprintf(stderr, "\tget <id>\n");
-	fprintf(stderr, "\tset [<ip>] [id <nr>] flags [no]backup|[no]fullmesh [port <nr>]\n");
+	fprintf(stderr, "\tset [<ip>] [id <nr>] flags [no]backup|[no]fullmesh [port <nr>] [token <token>] [rip <ip>] [rport <port>]\n");
 	fprintf(stderr, "\tflush\n");
 	fprintf(stderr, "\tdump\n");
 	fprintf(stderr, "\tlimits [<rcv addr max> <subflow max>]\n");
@@ -66,19 +66,24 @@ static int init_genl_req(char *data, int family, int cmd, int version)
 	return off;
 }
 
-static void nl_error(struct nlmsghdr *nh)
+static int nl_error(struct nlmsghdr *nh)
 {
 	struct nlmsgerr *err = (struct nlmsgerr *)NLMSG_DATA(nh);
 	int len = nh->nlmsg_len - sizeof(*nh);
 	uint32_t off;
 
-	if (len < sizeof(struct nlmsgerr))
+	if (len < sizeof(struct nlmsgerr)) {
 		error(1, 0, "netlink error message truncated %d min %ld", len,
 		      sizeof(struct nlmsgerr));
+		return -1;
+	}
 
-	if (!err->error) {
+	if (err->error) {
 		/* check messages from kernel */
 		struct rtattr *attrs = (struct rtattr *)NLMSG_DATA(nh);
+
+		fprintf(stderr, "netlink error %d (%s)\n",
+			err->error, strerror(-err->error));
 
 		while (RTA_OK(attrs, len)) {
 			if (attrs->rta_type == NLMSGERR_ATTR_MSG)
@@ -91,9 +96,10 @@ static void nl_error(struct nlmsghdr *nh)
 			}
 			attrs = RTA_NEXT(attrs, len);
 		}
-	} else {
-		fprintf(stderr, "netlink error %d", err->error);
+		return -1;
 	}
+
+	return 0;
 }
 
 static int capture_events(int fd, int event_group)
@@ -198,7 +204,7 @@ static int capture_events(int fd, int event_group)
 	return 0;
 }
 
-/* do a netlink command and, if max > 0, fetch the reply  */
+/* do a netlink command and, if max > 0, fetch the reply ; nh's size >1024B */
 static int do_nl_req(int fd, struct nlmsghdr *nh, int len, int max)
 {
 	struct sockaddr_nl nladdr = { .nl_family = AF_NETLINK };
@@ -207,12 +213,16 @@ static int do_nl_req(int fd, struct nlmsghdr *nh, int len, int max)
 	int rem, ret;
 	int err = 0;
 
+	/* If no expected answer, ask for an ACK to look for errors if any */
+	if (max == 0) {
+		nh->nlmsg_flags |= NLM_F_ACK;
+		max = 1024;
+	}
+
 	nh->nlmsg_len = len;
 	ret = sendto(fd, data, len, 0, (void *)&nladdr, sizeof(nladdr));
 	if (ret != len)
 		error(1, errno, "send netlink: %uB != %uB\n", ret, len);
-	if (max == 0)
-		return 0;
 
 	addr_len = sizeof(nladdr);
 	rem = ret = recvfrom(fd, data, max, 0, (void *)&nladdr, &addr_len);
@@ -221,10 +231,11 @@ static int do_nl_req(int fd, struct nlmsghdr *nh, int len, int max)
 
 	/* Beware: the NLMSG_NEXT macro updates the 'rem' argument */
 	for (; NLMSG_OK(nh, rem); nh = NLMSG_NEXT(nh, rem)) {
-		if (nh->nlmsg_type == NLMSG_ERROR) {
-			nl_error(nh);
+		if (nh->nlmsg_type == NLMSG_DONE)
+			break;
+
+		if (nh->nlmsg_type == NLMSG_ERROR && nl_error(nh))
 			err = 1;
-		}
 	}
 	if (err)
 		error(1, 0, "bailing out due to netlink error[s]");
@@ -425,7 +436,7 @@ int dsf(int fd, int pm_family, int argc, char *argv[])
 	}
 
 	/* token */
-	token = atoi(params[4]);
+	token = strtoul(params[4], NULL, 10);
 	rta = (void *)(data + off);
 	rta->rta_type = MPTCP_PM_ATTR_TOKEN;
 	rta->rta_len = RTA_LENGTH(4);
@@ -551,7 +562,7 @@ int csf(int fd, int pm_family, int argc, char *argv[])
 	}
 
 	/* token */
-	token = atoi(params[4]);
+	token = strtoul(params[4], NULL, 10);
 	rta = (void *)(data + off);
 	rta->rta_type = MPTCP_PM_ATTR_TOKEN;
 	rta->rta_len = RTA_LENGTH(4);
@@ -598,7 +609,7 @@ int remove_addr(int fd, int pm_family, int argc, char *argv[])
 			if (++arg >= argc)
 				error(1, 0, " missing token value");
 
-			token = atoi(argv[arg]);
+			token = strtoul(argv[arg], NULL, 10);
 			rta = (void *)(data + off);
 			rta->rta_type = MPTCP_PM_ATTR_TOKEN;
 			rta->rta_len = RTA_LENGTH(4);
@@ -710,7 +721,7 @@ int announce_addr(int fd, int pm_family, int argc, char *argv[])
 			if (++arg >= argc)
 				error(1, 0, " missing token value");
 
-			token = atoi(argv[arg]);
+			token = strtoul(argv[arg], NULL, 10);
 		} else
 			error(1, 0, "unknown keyword %s", argv[arg]);
 	}
@@ -1279,7 +1290,10 @@ int set_flags(int fd, int pm_family, int argc, char *argv[])
 	struct rtattr *rta, *nest;
 	struct nlmsghdr *nh;
 	u_int32_t flags = 0;
+	u_int32_t token = 0;
+	u_int16_t rport = 0;
 	u_int16_t family;
+	void *rip = NULL;
 	int nest_start;
 	int use_id = 0;
 	u_int8_t id;
@@ -1339,7 +1353,13 @@ int set_flags(int fd, int pm_family, int argc, char *argv[])
 		error(1, 0, " missing flags keyword");
 
 	for (; arg < argc; arg++) {
-		if (!strcmp(argv[arg], "flags")) {
+		if (!strcmp(argv[arg], "token")) {
+			if (++arg >= argc)
+				error(1, 0, " missing token value");
+
+			/* token */
+			token = strtoul(argv[arg], NULL, 10);
+		} else if (!strcmp(argv[arg], "flags")) {
 			char *tok, *str;
 
 			/* flags */
@@ -1378,11 +1398,71 @@ int set_flags(int fd, int pm_family, int argc, char *argv[])
 			rta->rta_len = RTA_LENGTH(2);
 			memcpy(RTA_DATA(rta), &port, 2);
 			off += NLMSG_ALIGN(rta->rta_len);
+		} else if (!strcmp(argv[arg], "rport")) {
+			if (++arg >= argc)
+				error(1, 0, " missing remote port");
+
+			rport = atoi(argv[arg]);
+		} else if (!strcmp(argv[arg], "rip")) {
+			if (++arg >= argc)
+				error(1, 0, " missing remote ip");
+
+			rip = argv[arg];
 		} else {
 			error(1, 0, "unknown keyword %s", argv[arg]);
 		}
 	}
 	nest->rta_len = off - nest_start;
+
+	/* token */
+	if (token) {
+		rta = (void *)(data + off);
+		rta->rta_type = MPTCP_PM_ATTR_TOKEN;
+		rta->rta_len = RTA_LENGTH(4);
+		memcpy(RTA_DATA(rta), &token, 4);
+		off += NLMSG_ALIGN(rta->rta_len);
+	}
+
+	/* remote addr/port */
+	if (rip) {
+		nest_start = off;
+		nest = (void *)(data + off);
+		nest->rta_type = NLA_F_NESTED | MPTCP_PM_ATTR_ADDR_REMOTE;
+		nest->rta_len = RTA_LENGTH(0);
+		off += NLMSG_ALIGN(nest->rta_len);
+
+		/* addr data */
+		rta = (void *)(data + off);
+		if (inet_pton(AF_INET, rip, RTA_DATA(rta))) {
+			family = AF_INET;
+			rta->rta_type = MPTCP_PM_ADDR_ATTR_ADDR4;
+			rta->rta_len = RTA_LENGTH(4);
+		} else if (inet_pton(AF_INET6, rip, RTA_DATA(rta))) {
+			family = AF_INET6;
+			rta->rta_type = MPTCP_PM_ADDR_ATTR_ADDR6;
+			rta->rta_len = RTA_LENGTH(16);
+		} else {
+			error(1, errno, "can't parse ip %s", (char *)rip);
+		}
+		off += NLMSG_ALIGN(rta->rta_len);
+
+		/* family */
+		rta = (void *)(data + off);
+		rta->rta_type = MPTCP_PM_ADDR_ATTR_FAMILY;
+		rta->rta_len = RTA_LENGTH(2);
+		memcpy(RTA_DATA(rta), &family, 2);
+		off += NLMSG_ALIGN(rta->rta_len);
+
+		if (rport) {
+			rta = (void *)(data + off);
+			rta->rta_type = MPTCP_PM_ADDR_ATTR_PORT;
+			rta->rta_len = RTA_LENGTH(2);
+			memcpy(RTA_DATA(rta), &rport, 2);
+			off += NLMSG_ALIGN(rta->rta_len);
+		}
+
+		nest->rta_len = off - nest_start;
+	}
 
 	do_nl_req(fd, nh, off, 0);
 	return 0;

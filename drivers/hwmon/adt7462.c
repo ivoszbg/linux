@@ -1782,7 +1782,7 @@ static int adt7462_detect(struct i2c_client *client,
 	if (revision != ADT7462_REVISION)
 		return -ENODEV;
 
-	strlcpy(info->type, "adt7462", I2C_NAME_SIZE);
+	strscpy(info->type, "adt7462", I2C_NAME_SIZE);
 
 	return 0;
 }
@@ -1819,7 +1819,7 @@ static struct i2c_driver adt7462_driver = {
 	.driver = {
 		.name	= "adt7462",
 	},
-	.probe_new	= adt7462_probe,
+	.probe		= adt7462_probe,
 	.id_table	= adt7462_id,
 	.detect		= adt7462_detect,
 	.address_list	= normal_i2c,

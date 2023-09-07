@@ -10,6 +10,7 @@
 #include "xfs_log_format.h"
 #include "xfs_trans_resv.h"
 #include "xfs_mount.h"
+#include "xfs_ag.h"
 #include "xfs_inode.h"
 #include "xfs_errortag.h"
 #include "xfs_error.h"
@@ -41,14 +42,12 @@ xfs_inode_buf_verify(
 	bool		readahead)
 {
 	struct xfs_mount *mp = bp->b_mount;
-	xfs_agnumber_t	agno;
 	int		i;
 	int		ni;
 
 	/*
 	 * Validate the magic number and version of every inode in the buffer
 	 */
-	agno = xfs_daddr_to_agno(mp, xfs_buf_daddr(bp));
 	ni = XFS_BB_TO_FSB(mp, bp->b_length) * mp->m_sb.sb_inopblock;
 	for (i = 0; i < ni; i++) {
 		struct xfs_dinode	*dip;
@@ -59,7 +58,7 @@ xfs_inode_buf_verify(
 		unlinked_ino = be32_to_cpu(dip->di_next_unlinked);
 		di_ok = xfs_verify_magic16(bp, dip->di_magic) &&
 			xfs_dinode_good_version(mp, dip->di_version) &&
-			xfs_verify_agino_or_null(mp, agno, unlinked_ino);
+			xfs_verify_agino_or_null(bp->b_pag, unlinked_ino);
 		if (unlikely(XFS_TEST_ERROR(!di_ok, mp,
 						XFS_ERRTAG_ITOBP_INOTOBP))) {
 			if (readahead) {
@@ -178,7 +177,6 @@ xfs_inode_from_disk(
 	xfs_failaddr_t		fa;
 
 	ASSERT(ip->i_cowfp == NULL);
-	ASSERT(ip->i_afp == NULL);
 
 	fa = xfs_dinode_verify(ip->i_mount, ip->i_ino, from);
 	if (fa) {
@@ -224,13 +222,15 @@ xfs_inode_from_disk(
 	 */
 	inode->i_atime = xfs_inode_from_disk_ts(from, from->di_atime);
 	inode->i_mtime = xfs_inode_from_disk_ts(from, from->di_mtime);
-	inode->i_ctime = xfs_inode_from_disk_ts(from, from->di_ctime);
+	inode_set_ctime_to_ts(inode,
+			      xfs_inode_from_disk_ts(from, from->di_ctime));
 
 	ip->i_disk_size = be64_to_cpu(from->di_size);
 	ip->i_nblocks = be64_to_cpu(from->di_nblocks);
 	ip->i_extsize = be32_to_cpu(from->di_extsize);
 	ip->i_forkoff = from->di_forkoff;
-	ip->i_diflags	= be16_to_cpu(from->di_flags);
+	ip->i_diflags = be16_to_cpu(from->di_flags);
+	ip->i_next_unlinked = be32_to_cpu(from->di_next_unlinked);
 
 	if (from->di_dmevmask || from->di_dmstate)
 		xfs_iflags_set(ip, XFS_IPRESERVE_DM_FIELDS);
@@ -286,7 +286,7 @@ xfs_inode_to_disk_iext_counters(
 {
 	if (xfs_inode_has_large_extent_counts(ip)) {
 		to->di_big_nextents = cpu_to_be64(xfs_ifork_nextents(&ip->i_df));
-		to->di_big_anextents = cpu_to_be32(xfs_ifork_nextents(ip->i_afp));
+		to->di_big_anextents = cpu_to_be32(xfs_ifork_nextents(&ip->i_af));
 		/*
 		 * We might be upgrading the inode to use larger extent counters
 		 * than was previously used. Hence zero the unused field.
@@ -294,7 +294,7 @@ xfs_inode_to_disk_iext_counters(
 		to->di_nrext64_pad = cpu_to_be16(0);
 	} else {
 		to->di_nextents = cpu_to_be32(xfs_ifork_nextents(&ip->i_df));
-		to->di_anextents = cpu_to_be16(xfs_ifork_nextents(ip->i_afp));
+		to->di_anextents = cpu_to_be16(xfs_ifork_nextents(&ip->i_af));
 	}
 }
 
@@ -317,7 +317,7 @@ xfs_inode_to_disk(
 
 	to->di_atime = xfs_inode_to_disk_ts(ip, inode->i_atime);
 	to->di_mtime = xfs_inode_to_disk_ts(ip, inode->i_mtime);
-	to->di_ctime = xfs_inode_to_disk_ts(ip, inode->i_ctime);
+	to->di_ctime = xfs_inode_to_disk_ts(ip, inode_get_ctime(inode));
 	to->di_nlink = cpu_to_be32(inode->i_nlink);
 	to->di_gen = cpu_to_be32(inode->i_generation);
 	to->di_mode = cpu_to_be16(inode->i_mode);
@@ -326,7 +326,7 @@ xfs_inode_to_disk(
 	to->di_nblocks = cpu_to_be64(ip->i_nblocks);
 	to->di_extsize = cpu_to_be32(ip->i_extsize);
 	to->di_forkoff = ip->i_forkoff;
-	to->di_aformat = xfs_ifork_format(ip->i_afp);
+	to->di_aformat = xfs_ifork_format(&ip->i_af);
 	to->di_flags = cpu_to_be16(ip->i_diflags);
 
 	if (xfs_has_v3inodes(ip->i_mount)) {

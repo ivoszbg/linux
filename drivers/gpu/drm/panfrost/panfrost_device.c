@@ -6,11 +6,13 @@
 #include <linux/reset.h>
 #include <linux/platform_device.h>
 #include <linux/pm_domain.h>
+#include <linux/pm_runtime.h>
 #include <linux/regulator/consumer.h>
 
 #include "panfrost_device.h"
 #include "panfrost_devfreq.h"
 #include "panfrost_features.h"
+#include "panfrost_issues.h"
 #include "panfrost_gpu.h"
 #include "panfrost_job.h"
 #include "panfrost_mmu.h"
@@ -380,9 +382,13 @@ const char *panfrost_exception_name(u32 exception_code)
 bool panfrost_exception_needs_reset(const struct panfrost_device *pfdev,
 				    u32 exception_code)
 {
-	/* Right now, none of the GPU we support need a reset, but this
-	 * might change.
+	/* If an occlusion query write causes a bus fault on affected GPUs,
+	 * future fragment jobs may hang. Reset to workaround.
 	 */
+	if (exception_code == DRM_PANFROST_EXCEPTION_JOB_BUS_FAULT)
+		return panfrost_has_hw_issue(pfdev, HW_ISSUE_TTRX_3076);
+
+	/* No other GPUs we support need a reset */
 	return false;
 }
 
@@ -395,8 +401,7 @@ void panfrost_device_reset(struct panfrost_device *pfdev)
 	panfrost_job_enable_interrupts(pfdev);
 }
 
-#ifdef CONFIG_PM
-int panfrost_device_resume(struct device *dev)
+static int panfrost_device_resume(struct device *dev)
 {
 	struct panfrost_device *pfdev = dev_get_drvdata(dev);
 
@@ -406,7 +411,7 @@ int panfrost_device_resume(struct device *dev)
 	return 0;
 }
 
-int panfrost_device_suspend(struct device *dev)
+static int panfrost_device_suspend(struct device *dev)
 {
 	struct panfrost_device *pfdev = dev_get_drvdata(dev);
 
@@ -418,4 +423,6 @@ int panfrost_device_suspend(struct device *dev)
 
 	return 0;
 }
-#endif
+
+EXPORT_GPL_RUNTIME_DEV_PM_OPS(panfrost_pm_ops, panfrost_device_suspend,
+			      panfrost_device_resume, NULL);

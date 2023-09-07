@@ -5,7 +5,6 @@ top_srcdir = $(abspath ../../../..)
 APIDIR := $(top_scrdir)/include/uapi
 TEST_GEN_FILES = action.o
 
-KSFT_KHDR_INSTALL := 1
 include ../lib.mk
 
 PROBE := $(shell $(LLC) -march=bpf -mcpu=probe -filetype=null /dev/null 2>&1)
@@ -25,7 +24,7 @@ CLANG_FLAGS = -I. -I$(APIDIR) \
 
 $(OUTPUT)/%.o: %.c
 	$(CLANG) $(CLANG_FLAGS) \
-		 -O2 -target bpf -emit-llvm -c $< -o - |      \
+		 -O2 --target=bpf -emit-llvm -c $< -o - |      \
 	$(LLC) -march=bpf -mcpu=$(CPU) $(LLC_FLAGS) -filetype=obj -o $@
 
 TEST_PROGS += ./tdc.sh

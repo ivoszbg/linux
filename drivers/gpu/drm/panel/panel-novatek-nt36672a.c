@@ -16,7 +16,6 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/of.h>
-#include <linux/of_device.h>
 
 #include <linux/gpio/consumer.h>
 #include <linux/pinctrl/consumer.h>
@@ -628,6 +627,10 @@ static int nt36672a_panel_add(struct nt36672a_panel *pinfo)
 
 	drm_panel_init(&pinfo->base, dev, &panel_funcs, DRM_MODE_CONNECTOR_DSI);
 
+	ret = drm_panel_of_backlight(&pinfo->base);
+	if (ret)
+		return dev_err_probe(dev, ret, "Failed to get backlight\n");
+
 	drm_panel_add(&pinfo->base);
 
 	return 0;
@@ -665,7 +668,7 @@ static int nt36672a_panel_probe(struct mipi_dsi_device *dsi)
 	return 0;
 }
 
-static int nt36672a_panel_remove(struct mipi_dsi_device *dsi)
+static void nt36672a_panel_remove(struct mipi_dsi_device *dsi)
 {
 	struct nt36672a_panel *pinfo = mipi_dsi_get_drvdata(dsi);
 	int err;
@@ -683,8 +686,6 @@ static int nt36672a_panel_remove(struct mipi_dsi_device *dsi)
 		dev_err(&dsi->dev, "failed to detach from DSI host: %d\n", err);
 
 	drm_panel_remove(&pinfo->base);
-
-	return 0;
 }
 
 static void nt36672a_panel_shutdown(struct mipi_dsi_device *dsi)

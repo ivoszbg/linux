@@ -30,6 +30,53 @@ void nvmet_passthrough_override_cap(struct nvmet_ctrl *ctrl)
 		ctrl->cap &= ~(1ULL << 43);
 }
 
+static u16 nvmet_passthru_override_id_descs(struct nvmet_req *req)
+{
+	struct nvmet_ctrl *ctrl = req->sq->ctrl;
+	u16 status = NVME_SC_SUCCESS;
+	int pos, len;
+	bool csi_seen = false;
+	void *data;
+	u8 csi;
+
+	if (!ctrl->subsys->clear_ids)
+		return status;
+
+	data = kzalloc(NVME_IDENTIFY_DATA_SIZE, GFP_KERNEL);
+	if (!data)
+		return NVME_SC_INTERNAL;
+
+	status = nvmet_copy_from_sgl(req, 0, data, NVME_IDENTIFY_DATA_SIZE);
+	if (status)
+		goto out_free;
+
+	for (pos = 0; pos < NVME_IDENTIFY_DATA_SIZE; pos += len) {
+		struct nvme_ns_id_desc *cur = data + pos;
+
+		if (cur->nidl == 0)
+			break;
+		if (cur->nidt == NVME_NIDT_CSI) {
+			memcpy(&csi, cur + 1, NVME_NIDT_CSI_LEN);
+			csi_seen = true;
+			break;
+		}
+		len = sizeof(struct nvme_ns_id_desc) + cur->nidl;
+	}
+
+	memset(data, 0, NVME_IDENTIFY_DATA_SIZE);
+	if (csi_seen) {
+		struct nvme_ns_id_desc *cur = data;
+
+		cur->nidt = NVME_NIDT_CSI;
+		cur->nidl = NVME_NIDT_CSI_LEN;
+		memcpy(cur + 1, &csi, NVME_NIDT_CSI_LEN);
+	}
+	status = nvmet_copy_to_sgl(req, 0, data, NVME_IDENTIFY_DATA_SIZE);
+out_free:
+	kfree(data);
+	return status;
+}
+
 static u16 nvmet_passthru_override_id_ctrl(struct nvmet_req *req)
 {
 	struct nvmet_ctrl *ctrl = req->sq->ctrl;
@@ -55,14 +102,14 @@ static u16 nvmet_passthru_override_id_ctrl(struct nvmet_req *req)
 	 * which depends on the host's memory fragementation. To solve this,
 	 * ensure mdts is limited to the pages equal to the number of segments.
 	 */
-	max_hw_sectors = min_not_zero(pctrl->max_segments << (PAGE_SHIFT - 9),
+	max_hw_sectors = min_not_zero(pctrl->max_segments << PAGE_SECTORS_SHIFT,
 				      pctrl->max_hw_sectors);
 
 	/*
 	 * nvmet_passthru_map_sg is limitted to using a single bio so limit
 	 * the mdts based on BIO_MAX_VECS as well
 	 */
-	max_hw_sectors = min_not_zero(BIO_MAX_VECS << (PAGE_SHIFT - 9),
+	max_hw_sectors = min_not_zero(BIO_MAX_VECS << PAGE_SECTORS_SHIFT,
 				      max_hw_sectors);
 
 	page_shift = NVME_CAP_MPSMIN(ctrl->cap) + 12;
@@ -152,6 +199,11 @@ static u16 nvmet_passthru_override_id_ns(struct nvmet_req *req)
 	 */
 	id->mc = 0;
 
+	if (req->sq->ctrl->subsys->clear_ids) {
+		memset(id->nguid, 0, NVME_NIDT_NGUID_LEN);
+		memset(id->eui64, 0, NVME_NIDT_EUI64_LEN);
+	}
+
 	status = nvmet_copy_to_sgl(req, 0, id, sizeof(*id));
 
 out_free:
@@ -163,10 +215,13 @@ static void nvmet_passthru_execute_cmd_work(struct work_struct *w)
 {
 	struct nvmet_req *req = container_of(w, struct nvmet_req, p.work);
 	struct request *rq = req->p.rq;
+	struct nvme_ctrl *ctrl = nvme_req(rq)->ctrl;
+	struct nvme_ns *ns = rq->q->queuedata;
+	u32 effects;
 	int status;
 
-	status = nvme_execute_passthru_rq(rq);
-
+	effects = nvme_passthru_start(ctrl, ns, req->cmd->common.opcode);
+	status = nvme_execute_rq(rq, false);
 	if (status == NVME_SC_SUCCESS &&
 	    req->cmd->common.opcode == nvme_admin_identify) {
 		switch (req->cmd->identify.cns) {
@@ -176,6 +231,9 @@ static void nvmet_passthru_execute_cmd_work(struct work_struct *w)
 		case NVME_ID_CNS_NS:
 			nvmet_passthru_override_id_ns(req);
 			break;
+		case NVME_ID_CNS_NS_DESC_LIST:
+			nvmet_passthru_override_id_descs(req);
+			break;
 		}
 	} else if (status < 0)
 		status = NVME_SC_INTERNAL;
@@ -183,16 +241,20 @@ static void nvmet_passthru_execute_cmd_work(struct work_struct *w)
 	req->cqe->result = nvme_req(rq)->result;
 	nvmet_req_complete(req, status);
 	blk_mq_free_request(rq);
+
+	if (effects)
+		nvme_passthru_end(ctrl, ns, effects, req->cmd, status);
 }
 
-static void nvmet_passthru_req_done(struct request *rq,
-				    blk_status_t blk_status)
+static enum rq_end_io_ret nvmet_passthru_req_done(struct request *rq,
+						  blk_status_t blk_status)
 {
 	struct nvmet_req *req = rq->end_io_data;
 
 	req->cqe->result = nvme_req(rq)->result;
 	nvmet_req_complete(req, nvme_req(rq)->status);
 	blk_mq_free_request(rq);
+	return RQ_END_IO_NONE;
 }
 
 static int nvmet_passthru_map_sg(struct nvmet_req *req, struct request *rq)
@@ -273,14 +335,13 @@ static void nvmet_passthru_execute_cmd(struct nvmet_req *req)
 	}
 
 	/*
-	 * If there are effects for the command we are about to execute, or
-	 * an end_req function we need to use nvme_execute_passthru_rq()
-	 * synchronously in a work item seeing the end_req function and
-	 * nvme_passthru_end() can't be called in the request done callback
-	 * which is typically in interrupt context.
+	 * If a command needs post-execution fixups, or there are any
+	 * non-trivial effects, make sure to execute the command synchronously
+	 * in a workqueue so that nvme_passthru_end gets called.
 	 */
 	effects = nvme_command_effects(ctrl, ns, req->cmd->common.opcode);
-	if (req->p.use_workqueue || effects) {
+	if (req->p.use_workqueue ||
+	    (effects & ~(NVME_CMD_EFFECTS_CSUPP | NVME_CMD_EFFECTS_LBCC))) {
 		INIT_WORK(&req->p.work, nvmet_passthru_execute_cmd_work);
 		req->p.rq = rq;
 		queue_work(nvmet_wq, &req->p.work);

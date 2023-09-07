@@ -35,7 +35,7 @@ bl_free_device(struct pnfs_block_dev *dev)
 		}
 
 		if (dev->bdev)
-			blkdev_put(dev->bdev, FMODE_READ | FMODE_WRITE);
+			blkdev_put(dev->bdev, NULL);
 	}
 }
 
@@ -243,7 +243,8 @@ bl_parse_simple(struct nfs_server *server, struct pnfs_block_dev *d,
 	if (!dev)
 		return -EIO;
 
-	bdev = blkdev_get_by_dev(dev, FMODE_READ | FMODE_WRITE, NULL);
+	bdev = blkdev_get_by_dev(dev, BLK_OPEN_READ | BLK_OPEN_WRITE, NULL,
+				 NULL);
 	if (IS_ERR(bdev)) {
 		printk(KERN_WARNING "pNFS: failed to open device %d:%d (%ld)\n",
 			MAJOR(dev), MINOR(dev), PTR_ERR(bdev));
@@ -301,49 +302,24 @@ bl_validate_designator(struct pnfs_block_volume *v)
 	}
 }
 
-/*
- * Try to open the udev path for the WWN.  At least on Debian the udev
- * by-id path will always point to the dm-multipath device if one exists.
- */
 static struct block_device *
-bl_open_udev_path(struct pnfs_block_volume *v)
+bl_open_path(struct pnfs_block_volume *v, const char *prefix)
 {
 	struct block_device *bdev;
 	const char *devname;
 
-	devname = kasprintf(GFP_KERNEL, "/dev/disk/by-id/wwn-0x%*phN",
-				v->scsi.designator_len, v->scsi.designator);
+	devname = kasprintf(GFP_KERNEL, "/dev/disk/by-id/%s%*phN",
+			prefix, v->scsi.designator_len, v->scsi.designator);
 	if (!devname)
 		return ERR_PTR(-ENOMEM);
 
-	bdev = blkdev_get_by_path(devname, FMODE_READ | FMODE_WRITE, NULL);
+	bdev = blkdev_get_by_path(devname, BLK_OPEN_READ | BLK_OPEN_WRITE, NULL,
+				  NULL);
 	if (IS_ERR(bdev)) {
 		pr_warn("pNFS: failed to open device %s (%ld)\n",
 			devname, PTR_ERR(bdev));
 	}
 
-	kfree(devname);
-	return bdev;
-}
-
-/*
- * Try to open the RH/Fedora specific dm-mpath udev path for this WWN, as the
- * wwn- links will only point to the first discovered SCSI device there.
- */
-static struct block_device *
-bl_open_dm_mpath_udev_path(struct pnfs_block_volume *v)
-{
-	struct block_device *bdev;
-	const char *devname;
-
-	devname = kasprintf(GFP_KERNEL,
-			"/dev/disk/by-id/dm-uuid-mpath-%d%*phN",
-			v->scsi.designator_type,
-			v->scsi.designator_len, v->scsi.designator);
-	if (!devname)
-		return ERR_PTR(-ENOMEM);
-
-	bdev = blkdev_get_by_path(devname, FMODE_READ | FMODE_WRITE, NULL);
 	kfree(devname);
 	return bdev;
 }
@@ -360,9 +336,15 @@ bl_parse_scsi(struct nfs_server *server, struct pnfs_block_dev *d,
 	if (!bl_validate_designator(v))
 		return -EINVAL;
 
-	bdev = bl_open_dm_mpath_udev_path(v);
+	/*
+	 * Try to open the RH/Fedora specific dm-mpath udev path first, as the
+	 * wwn- links will only point to the first discovered SCSI device there.
+	 * On other distributions like Debian, the default SCSI by-id path will
+	 * point to the dm-multipath device if one exists.
+	 */
+	bdev = bl_open_path(v, "dm-uuid-mpath-0x");
 	if (IS_ERR(bdev))
-		bdev = bl_open_udev_path(v);
+		bdev = bl_open_path(v, "wwn-0x");
 	if (IS_ERR(bdev))
 		return PTR_ERR(bdev);
 	d->bdev = bdev;
@@ -393,7 +375,7 @@ bl_parse_scsi(struct nfs_server *server, struct pnfs_block_dev *d,
 	return 0;
 
 out_blkdev_put:
-	blkdev_put(d->bdev, FMODE_READ | FMODE_WRITE);
+	blkdev_put(d->bdev, NULL);
 	return error;
 }
 
@@ -422,7 +404,7 @@ bl_parse_concat(struct nfs_server *server, struct pnfs_block_dev *d,
 	int ret, i;
 
 	d->children = kcalloc(v->concat.volumes_count,
-			sizeof(struct pnfs_block_dev), GFP_KERNEL);
+			sizeof(struct pnfs_block_dev), gfp_mask);
 	if (!d->children)
 		return -ENOMEM;
 
@@ -451,7 +433,7 @@ bl_parse_stripe(struct nfs_server *server, struct pnfs_block_dev *d,
 	int ret, i;
 
 	d->children = kcalloc(v->stripe.volumes_count,
-			sizeof(struct pnfs_block_dev), GFP_KERNEL);
+			sizeof(struct pnfs_block_dev), gfp_mask);
 	if (!d->children)
 		return -ENOMEM;
 

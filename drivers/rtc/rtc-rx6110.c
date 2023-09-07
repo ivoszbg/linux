@@ -10,7 +10,6 @@
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include <linux/of_gpio.h>
 #include <linux/regmap.h>
 #include <linux/rtc.h>
 #include <linux/of.h>
@@ -376,7 +375,7 @@ static const struct spi_device_id rx6110_spi_id[] = {
 };
 MODULE_DEVICE_TABLE(spi, rx6110_spi_id);
 
-static const struct of_device_id rx6110_spi_of_match[] = {
+static const __maybe_unused struct of_device_id rx6110_spi_of_match[] = {
 	{ .compatible = "epson,rx6110" },
 	{ },
 };
@@ -419,8 +418,7 @@ static struct regmap_config regmap_i2c_config = {
 	.read_flag_mask = 0x80,
 };
 
-static int rx6110_i2c_probe(struct i2c_client *client,
-			    const struct i2c_device_id *id)
+static int rx6110_i2c_probe(struct i2c_client *client)
 {
 	struct i2c_adapter *adapter = client->adapter;
 	struct rx6110_data *rx6110;

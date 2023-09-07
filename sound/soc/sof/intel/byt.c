@@ -225,11 +225,7 @@ static struct snd_sof_dsp_ops sof_byt_ops = {
 	.run		= atom_run,
 	.reset		= atom_reset,
 
-	/* Register IO */
-	.write		= sof_io_write,
-	.read		= sof_io_read,
-	.write64	= sof_io_write64,
-	.read64		= sof_io_read64,
+	/* Register IO uses direct mmio */
 
 	/* Block IO */
 	.block_read	= sof_block_read,
@@ -304,11 +300,7 @@ static struct snd_sof_dsp_ops sof_cht_ops = {
 	.run		= atom_run,
 	.reset		= atom_reset,
 
-	/* Register IO */
-	.write		= sof_io_write,
-	.read		= sof_io_read,
-	.write64	= sof_io_write64,
-	.read64		= sof_io_read64,
+	/* Register IO uses direct mmio */
 
 	/* Block IO */
 	.block_read	= sof_block_read,
@@ -465,10 +457,7 @@ static int sof_baytrail_probe(struct platform_device *pdev)
 		return -ENODEV;
 	}
 
-	desc = device_get_match_data(&pdev->dev);
-	if (!desc)
-		return -ENODEV;
-
+	desc = (const struct sof_dev_desc *)id->driver_data;
 	if (desc == &sof_acpi_baytrail_desc && soc_intel_is_byt_cr(pdev))
 		desc = &sof_acpi_baytrailcr_desc;
 

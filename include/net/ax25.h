@@ -236,6 +236,7 @@ typedef struct ax25_cb {
 	ax25_address		source_addr, dest_addr;
 	ax25_digi		*digipeat;
 	ax25_dev		*ax25_dev;
+	netdevice_tracker	dev_tracker;
 	unsigned char		iamdigi;
 	unsigned char		state, modulus, pidincl;
 	unsigned short		vs, vr, va;
@@ -259,10 +260,7 @@ struct ax25_sock {
 	struct ax25_cb		*cb;
 };
 
-static inline struct ax25_sock *ax25_sk(const struct sock *sk)
-{
-	return (struct ax25_sock *) sk;
-}
+#define ax25_sk(ptr) container_of_const(ptr, struct ax25_sock, sk)
 
 static inline struct ax25_cb *sk_to_ax25(const struct sock *sk)
 {

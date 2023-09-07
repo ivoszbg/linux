@@ -74,6 +74,7 @@
        __SMU_DUMMY_MAP(OverDriveSetPercentage),       \
        __SMU_DUMMY_MAP(SetMinDeepSleepDcefclk),       \
        __SMU_DUMMY_MAP(ReenableAcDcInterrupt),        \
+       __SMU_DUMMY_MAP(AllowIHHostInterrupt),        \
        __SMU_DUMMY_MAP(NotifyPowerSource),            \
        __SMU_DUMMY_MAP(SetUclkFastSwitch),            \
        __SMU_DUMMY_MAP(SetUclkDownHyst),              \
@@ -234,7 +235,17 @@
 	__SMU_DUMMY_MAP(UnforceGfxVid),           \
 	__SMU_DUMMY_MAP(HeavySBR),			\
 	__SMU_DUMMY_MAP(SetBadHBMPagesRetiredFlagsPerChannel), \
-	__SMU_DUMMY_MAP(EnableGfxImu),
+	__SMU_DUMMY_MAP(EnableGfxImu), \
+	__SMU_DUMMY_MAP(DriverMode2Reset), \
+	__SMU_DUMMY_MAP(GetGfxOffStatus),		 \
+	__SMU_DUMMY_MAP(GetGfxOffEntryCount),		 \
+	__SMU_DUMMY_MAP(LogGfxOffResidency),			\
+	__SMU_DUMMY_MAP(SetNumBadMemoryPagesRetired),		\
+	__SMU_DUMMY_MAP(SetBadMemoryPagesRetiredFlagsPerChannel), \
+	__SMU_DUMMY_MAP(AllowGpo),	\
+	__SMU_DUMMY_MAP(Mode2Reset),	\
+	__SMU_DUMMY_MAP(RequestI2cTransaction), \
+	__SMU_DUMMY_MAP(GetMetricsTable),
 
 #undef __SMU_DUMMY_MAP
 #define __SMU_DUMMY_MAP(type)	SMU_MSG_##type

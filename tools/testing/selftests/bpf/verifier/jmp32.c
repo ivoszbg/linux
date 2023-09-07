@@ -290,6 +290,7 @@
 	.result_unpriv = REJECT,
 	.result = ACCEPT,
 	.retval = 2,
+	.flags = F_NEEDS_EFFICIENT_UNALIGNED_ACCESS,
 },
 {
 	"jgt32: BPF_K",
@@ -360,6 +361,7 @@
 	.result_unpriv = REJECT,
 	.result = ACCEPT,
 	.retval = 2,
+	.flags = F_NEEDS_EFFICIENT_UNALIGNED_ACCESS,
 },
 {
 	"jle32: BPF_K",
@@ -430,6 +432,7 @@
 	.result_unpriv = REJECT,
 	.result = ACCEPT,
 	.retval = 2,
+	.flags = F_NEEDS_EFFICIENT_UNALIGNED_ACCESS,
 },
 {
 	"jlt32: BPF_K",
@@ -500,6 +503,7 @@
 	.result_unpriv = REJECT,
 	.result = ACCEPT,
 	.retval = 2,
+	.flags = F_NEEDS_EFFICIENT_UNALIGNED_ACCESS,
 },
 {
 	"jsge32: BPF_K",
@@ -570,6 +574,7 @@
 	.result_unpriv = REJECT,
 	.result = ACCEPT,
 	.retval = 2,
+	.flags = F_NEEDS_EFFICIENT_UNALIGNED_ACCESS,
 },
 {
 	"jsgt32: BPF_K",
@@ -640,6 +645,7 @@
 	.result_unpriv = REJECT,
 	.result = ACCEPT,
 	.retval = 2,
+	.flags = F_NEEDS_EFFICIENT_UNALIGNED_ACCESS,
 },
 {
 	"jsle32: BPF_K",
@@ -710,6 +716,7 @@
 	.result_unpriv = REJECT,
 	.result = ACCEPT,
 	.retval = 2,
+	.flags = F_NEEDS_EFFICIENT_UNALIGNED_ACCESS,
 },
 {
 	"jslt32: BPF_K",
@@ -780,6 +787,7 @@
 	.result_unpriv = REJECT,
 	.result = ACCEPT,
 	.retval = 2,
+	.flags = F_NEEDS_EFFICIENT_UNALIGNED_ACCESS,
 },
 {
 	"jgt32: range bound deduction, reg op imm",
@@ -863,4 +871,25 @@
 	.fixup_map_hash_48b = { 4 },
 	.result = ACCEPT,
 	.flags = F_NEEDS_EFFICIENT_UNALIGNED_ACCESS,
+},
+{
+	"jeq32/jne32: bounds checking",
+	.insns = {
+	BPF_MOV64_IMM(BPF_REG_6, 563),
+	BPF_MOV64_IMM(BPF_REG_2, 0),
+	BPF_ALU64_IMM(BPF_NEG, BPF_REG_2, 0),
+	BPF_ALU64_IMM(BPF_NEG, BPF_REG_2, 0),
+	BPF_ALU32_REG(BPF_OR, BPF_REG_2, BPF_REG_6),
+	BPF_JMP32_IMM(BPF_JNE, BPF_REG_2, 8, 5),
+	BPF_JMP_IMM(BPF_JSGE, BPF_REG_2, 500, 2),
+	BPF_MOV64_IMM(BPF_REG_0, 2),
+	BPF_EXIT_INSN(),
+	BPF_MOV64_REG(BPF_REG_0, BPF_REG_4),
+	BPF_EXIT_INSN(),
+	BPF_MOV64_IMM(BPF_REG_0, 1),
+	BPF_EXIT_INSN(),
+	},
+	.prog_type = BPF_PROG_TYPE_SCHED_CLS,
+	.result = ACCEPT,
+	.retval = 1,
 },

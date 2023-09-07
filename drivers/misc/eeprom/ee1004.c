@@ -219,14 +219,12 @@ static int ee1004_probe(struct i2c_client *client)
 	return err;
 }
 
-static int ee1004_remove(struct i2c_client *client)
+static void ee1004_remove(struct i2c_client *client)
 {
 	/* Remove page select clients if this is the last device */
 	mutex_lock(&ee1004_bus_lock);
 	ee1004_cleanup(EE1004_NUM_PAGES);
 	mutex_unlock(&ee1004_bus_lock);
-
-	return 0;
 }
 
 /*-------------------------------------------------------------------------*/
@@ -236,7 +234,7 @@ static struct i2c_driver ee1004_driver = {
 		.name = "ee1004",
 		.dev_groups = ee1004_groups,
 	},
-	.probe_new = ee1004_probe,
+	.probe = ee1004_probe,
 	.remove = ee1004_remove,
 	.id_table = ee1004_ids,
 };

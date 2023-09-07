@@ -32,7 +32,7 @@ static unsigned int auth_hashbits = RPC_CREDCACHE_DEFAULT_HASHBITS;
 static const struct rpc_authops __rcu *auth_flavors[RPC_AUTH_MAXFLAVOR] = {
 	[RPC_AUTH_NULL] = (const struct rpc_authops __force __rcu *)&authnull_ops,
 	[RPC_AUTH_UNIX] = (const struct rpc_authops __force __rcu *)&authunix_ops,
-	NULL,			/* others can be loadable modules */
+	[RPC_AUTH_TLS]  = (const struct rpc_authops __force __rcu *)&authtls_ops,
 };
 
 static LIST_HEAD(cred_unused);
@@ -445,7 +445,7 @@ rpcauth_prune_expired(struct list_head *free, int nr_to_scan)
 		 * Enforce a 60 second garbage collection moratorium
 		 * Note that the cred_unused list must be time-ordered.
 		 */
-		if (!time_in_range(cred->cr_expire, expired, jiffies))
+		if (time_in_range(cred->cr_expire, expired, jiffies))
 			continue;
 		if (!rpcauth_unhash_cred(cred))
 			continue;
@@ -874,7 +874,7 @@ int __init rpcauth_init_module(void)
 	err = rpc_init_authunix();
 	if (err < 0)
 		goto out1;
-	err = register_shrinker(&rpc_cred_shrinker);
+	err = register_shrinker(&rpc_cred_shrinker, "sunrpc_cred");
 	if (err < 0)
 		goto out2;
 	return 0;

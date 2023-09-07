@@ -1,13 +1,4 @@
-/*
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License as
- * published by the Free Software Foundation version 2.
- *
- * This program is distributed "as is" WITHOUT ANY WARRANTY of any
- * kind, whether express or implied; without even the implied warranty
- * of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- * GNU General Public License for more details.
- */
+// SPDX-License-Identifier: GPL-2.0-only
 
 #include <linux/clk.h>
 #include <linux/clkdev.h>
@@ -890,14 +881,10 @@ static int ti_adpll_probe(struct platform_device *pdev)
 	dev_set_drvdata(d->dev, d);
 	spin_lock_init(&d->lock);
 
-	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	if (!res)
-		return -ENODEV;
-	d->pa = res->start;
-
-	d->iobase = devm_ioremap_resource(dev, res);
+	d->iobase = devm_platform_get_and_ioremap_resource(pdev, 0, &res);
 	if (IS_ERR(d->iobase))
 		return PTR_ERR(d->iobase);
+	d->pa = res->start;
 
 	err = ti_adpll_init_registers(d);
 	if (err)
@@ -940,13 +927,11 @@ free:
 	return err;
 }
 
-static int ti_adpll_remove(struct platform_device *pdev)
+static void ti_adpll_remove(struct platform_device *pdev)
 {
 	struct ti_adpll_data *d = dev_get_drvdata(&pdev->dev);
 
 	ti_adpll_free_resources(d);
-
-	return 0;
 }
 
 static struct platform_driver ti_adpll_driver = {
@@ -955,7 +940,7 @@ static struct platform_driver ti_adpll_driver = {
 		.of_match_table = ti_adpll_match,
 	},
 	.probe = ti_adpll_probe,
-	.remove = ti_adpll_remove,
+	.remove_new = ti_adpll_remove,
 };
 
 static int __init ti_adpll_init(void)

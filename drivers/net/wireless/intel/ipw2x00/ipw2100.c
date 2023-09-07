@@ -418,17 +418,6 @@ static inline void write_nic_byte(struct net_device *dev, u32 addr, u8 val)
 	write_register_byte(dev, IPW_REG_INDIRECT_ACCESS_DATA, val);
 }
 
-static inline void write_nic_auto_inc_address(struct net_device *dev, u32 addr)
-{
-	write_register(dev, IPW_REG_AUTOINCREMENT_ADDRESS,
-		       addr & IPW_REG_INDIRECT_ADDR_MASK);
-}
-
-static inline void write_nic_dword_auto_inc(struct net_device *dev, u32 val)
-{
-	write_register(dev, IPW_REG_AUTOINCREMENT_DATA, val);
-}
-
 static void write_nic_memory(struct net_device *dev, u32 addr, u32 len,
 				    const u8 * buf)
 {
@@ -5907,8 +5896,8 @@ static void ipw_ethtool_get_drvinfo(struct net_device *dev,
 	struct ipw2100_priv *priv = libipw_priv(dev);
 	char fw_ver[64], ucode_ver[64];
 
-	strlcpy(info->driver, DRV_NAME, sizeof(info->driver));
-	strlcpy(info->version, DRV_VERSION, sizeof(info->version));
+	strscpy(info->driver, DRV_NAME, sizeof(info->driver));
+	strscpy(info->version, DRV_VERSION, sizeof(info->version));
 
 	ipw2100_get_fwversion(priv, fw_ver, sizeof(fw_ver));
 	ipw2100_get_ucodeversion(priv, ucode_ver, sizeof(ucode_ver));
@@ -5916,7 +5905,7 @@ static void ipw_ethtool_get_drvinfo(struct net_device *dev,
 	snprintf(info->fw_version, sizeof(info->fw_version), "%s:%d:%s",
 		 fw_ver, priv->eeprom_version, ucode_ver);
 
-	strlcpy(info->bus_info, pci_name(priv->pci_dev),
+	strscpy(info->bus_info, pci_name(priv->pci_dev),
 		sizeof(info->bus_info));
 }
 
@@ -6529,7 +6518,7 @@ static struct pci_driver ipw2100_pci_driver = {
 	.shutdown = ipw2100_shutdown,
 };
 
-/**
+/*
  * Initialize the ipw2100 driver/module
  *
  * @returns 0 if ok, < 0 errno node con error.
@@ -6561,7 +6550,7 @@ out:
 	return ret;
 }
 
-/**
+/*
  * Cleanup ipw2100 driver registration
  */
 static void __exit ipw2100_exit(void)

@@ -71,9 +71,9 @@ extern unsigned long vm_map_base;
 #define _ATYPE32_	int
 #define _ATYPE64_	__s64
 #ifdef CONFIG_64BIT
-#define _CONST64_(x)	x ## L
+#define _CONST64_(x)	x ## UL
 #else
-#define _CONST64_(x)	x ## LL
+#define _CONST64_(x)	x ## ULL
 #endif
 #endif
 
@@ -108,5 +108,23 @@ extern unsigned long vm_map_base;
  * Returns the physical address of a KPRANGEx / XKPRANGE address
  */
 #define PHYSADDR(a)		((_ACAST64_(a)) & TO_PHYS_MASK)
+
+/*
+ * On LoongArch, I/O ports mappring is following:
+ *
+ *              |         ....          |
+ *              |-----------------------|
+ *              | pci io ports(16K~32M) |
+ *              |-----------------------|
+ *              | isa io ports(0  ~16K) |
+ * PCI_IOBASE ->|-----------------------|
+ *              |         ....          |
+ */
+#define PCI_IOBASE	((void __iomem *)(vm_map_base + (2 * PAGE_SIZE)))
+#define PCI_IOSIZE	SZ_32M
+#define ISA_IOSIZE	SZ_16K
+#define IO_SPACE_LIMIT	(PCI_IOSIZE - 1)
+
+#define PHYS_LINK_KADDR	PHYSADDR(VMLINUX_LOAD_ADDRESS)
 
 #endif /* _ASM_ADDRSPACE_H */

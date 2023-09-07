@@ -1544,7 +1544,7 @@ error:
 	return ret;
 }
 
-static int ov2659_remove(struct i2c_client *client)
+static void ov2659_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct ov2659 *ov2659 = to_ov2659(sd);
@@ -1558,8 +1558,6 @@ static int ov2659_remove(struct i2c_client *client)
 	if (!pm_runtime_status_suspended(&client->dev))
 		ov2659_power_off(&client->dev);
 	pm_runtime_set_suspended(&client->dev);
-
-	return 0;
 }
 
 static const struct dev_pm_ops ov2659_pm_ops = {
@@ -1586,7 +1584,7 @@ static struct i2c_driver ov2659_i2c_driver = {
 		.pm	= &ov2659_pm_ops,
 		.of_match_table = of_match_ptr(ov2659_of_match),
 	},
-	.probe_new	= ov2659_probe,
+	.probe		= ov2659_probe,
 	.remove		= ov2659_remove,
 	.id_table	= ov2659_id,
 };

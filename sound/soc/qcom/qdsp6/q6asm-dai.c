@@ -1205,17 +1205,18 @@ static const struct snd_soc_dapm_widget q6asm_dapm_widgets[] = {
 };
 
 static const struct snd_soc_component_driver q6asm_fe_dai_component = {
-	.name		= DRV_NAME,
-	.open		= q6asm_dai_open,
-	.hw_params	= q6asm_dai_hw_params,
-	.close		= q6asm_dai_close,
-	.prepare	= q6asm_dai_prepare,
-	.trigger	= q6asm_dai_trigger,
-	.pointer	= q6asm_dai_pointer,
-	.pcm_construct	= q6asm_dai_pcm_new,
-	.compress_ops	= &q6asm_dai_compress_ops,
-	.dapm_widgets	= q6asm_dapm_widgets,
-	.num_dapm_widgets = ARRAY_SIZE(q6asm_dapm_widgets),
+	.name			= DRV_NAME,
+	.open			= q6asm_dai_open,
+	.hw_params		= q6asm_dai_hw_params,
+	.close			= q6asm_dai_close,
+	.prepare		= q6asm_dai_prepare,
+	.trigger		= q6asm_dai_trigger,
+	.pointer		= q6asm_dai_pointer,
+	.pcm_construct		= q6asm_dai_pcm_new,
+	.compress_ops		= &q6asm_dai_compress_ops,
+	.dapm_widgets		= q6asm_dapm_widgets,
+	.num_dapm_widgets	= ARRAY_SIZE(q6asm_dapm_widgets),
+	.legacy_dai_naming	= 1,
 };
 
 static struct snd_soc_dai_driver q6asm_fe_dais_template[] = {
@@ -1227,6 +1228,10 @@ static struct snd_soc_dai_driver q6asm_fe_dais_template[] = {
 	Q6ASM_FEDAI_DRIVER(6),
 	Q6ASM_FEDAI_DRIVER(7),
 	Q6ASM_FEDAI_DRIVER(8),
+};
+
+static const struct snd_soc_dai_ops q6asm_dai_ops = {
+	.compress_new = snd_soc_new_compress,
 };
 
 static int of_q6asm_parse_dai_data(struct device *dev,
@@ -1271,7 +1276,7 @@ static int of_q6asm_parse_dai_data(struct device *dev,
 			dai_drv->playback = empty_stream;
 
 		if (of_property_read_bool(node, "is-compress-dai"))
-			dai_drv->compress_new = snd_soc_new_compress;
+			dai_drv->ops = &q6asm_dai_ops;
 	}
 
 	return 0;

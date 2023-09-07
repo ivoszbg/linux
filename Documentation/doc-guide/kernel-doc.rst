@@ -1,3 +1,5 @@
+.. title:: Kernel-doc comments
+
 ===========================
 Writing kernel-doc comments
 ===========================
@@ -11,6 +13,9 @@ when it is embedded in source files.
    gtk-doc or Doxygen, yet distinctively different, for historical
    reasons. The kernel source contains tens of thousands of kernel-doc
    comments. Please stick to the style described here.
+
+.. note:: kernel-doc does not cover Rust code: please see
+   Documentation/rust/general-information.rst instead.
 
 The kernel-doc structure is extracted from the comments, and proper
 `Sphinx C Domain`_ function and type descriptions with anchors are
@@ -146,9 +151,9 @@ named ``Return``.
      line breaks, so if you try to format some text nicely, as in::
 
 	* Return:
-	* 0 - OK
-	* -EINVAL - invalid argument
-	* -ENOMEM - out of memory
+	* %0 - OK
+	* %-EINVAL - invalid argument
+	* %-ENOMEM - out of memory
 
      this will all run together and produce::
 
@@ -158,8 +163,8 @@ named ``Return``.
      ReST list, e. g.::
 
       * Return:
-      * * 0		- OK to runtime suspend the device
-      * * -EBUSY	- Device should not be runtime suspended
+      * * %0		- OK to runtime suspend the device
+      * * %-EBUSY	- Device should not be runtime suspended
 
   #) If the descriptive text you provide has lines that begin with
      some phrase followed by a colon, each of those phrases will be taken

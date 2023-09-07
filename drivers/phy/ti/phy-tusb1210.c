@@ -14,6 +14,7 @@
 #include <linux/gpio/consumer.h>
 #include <linux/phy/ulpi_phy.h>
 #include <linux/power_supply.h>
+#include <linux/property.h>
 #include <linux/workqueue.h>
 
 #define TUSB1211_POWER_CONTROL				0x3d
@@ -105,8 +106,9 @@ static int tusb1210_power_on(struct phy *phy)
 	msleep(TUSB1210_RESET_TIME_MS);
 
 	/* Restore the optional eye diagram optimization value */
-	return tusb1210_ulpi_write(tusb, TUSB1210_VENDOR_SPECIFIC2,
-				   tusb->vendor_specific2);
+	tusb1210_ulpi_write(tusb, TUSB1210_VENDOR_SPECIFIC2, tusb->vendor_specific2);
+
+	return 0;
 }
 
 static int tusb1210_power_off(struct phy *phy)

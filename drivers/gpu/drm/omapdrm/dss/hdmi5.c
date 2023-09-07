@@ -32,6 +32,7 @@
 
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_state_helper.h>
+#include <drm/drm_edid.h>
 
 #include "omapdss.h"
 #include "hdmi5_core.h"
@@ -797,7 +798,7 @@ err_free:
 	return r;
 }
 
-static int hdmi5_remove(struct platform_device *pdev)
+static void hdmi5_remove(struct platform_device *pdev)
 {
 	struct omap_hdmi *hdmi = platform_get_drvdata(pdev);
 
@@ -808,7 +809,6 @@ static int hdmi5_remove(struct platform_device *pdev)
 	pm_runtime_disable(&pdev->dev);
 
 	kfree(hdmi);
-	return 0;
 }
 
 static const struct of_device_id hdmi_of_match[] = {
@@ -819,7 +819,7 @@ static const struct of_device_id hdmi_of_match[] = {
 
 struct platform_driver omapdss_hdmi5hw_driver = {
 	.probe		= hdmi5_probe,
-	.remove		= hdmi5_remove,
+	.remove_new	= hdmi5_remove,
 	.driver         = {
 		.name   = "omapdss_hdmi5",
 		.of_match_table = hdmi_of_match,

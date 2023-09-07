@@ -47,6 +47,7 @@ struct test_args {
 	int nr_iter;
 	int timer_period_ms;
 	int migration_freq_ms;
+	struct kvm_arm_counter_offset offset;
 };
 
 static struct test_args test_args = {
@@ -54,6 +55,7 @@ static struct test_args test_args = {
 	.nr_iter = NR_TEST_ITERS_DEF,
 	.timer_period_ms = TIMER_TEST_PERIOD_MS_DEF,
 	.migration_freq_ms = TIMER_TEST_MIGRATION_FREQ_MS,
+	.offset = { .reserved = 1 },
 };
 
 #define msecs_to_usecs(msec)		((msec) * 1000LL)
@@ -76,13 +78,8 @@ struct test_vcpu_shared_data {
 	uint64_t xcnt;
 };
 
-struct test_vcpu {
-	uint32_t vcpuid;
-	pthread_t pt_vcpu_run;
-	struct kvm_vm *vm;
-};
-
-static struct test_vcpu test_vcpu[KVM_MAX_VCPUS];
+static struct kvm_vcpu *vcpus[KVM_MAX_VCPUS];
+static pthread_t pt_vcpu_run[KVM_MAX_VCPUS];
 static struct test_vcpu_shared_data vcpu_shared_data[KVM_MAX_VCPUS];
 
 static int vtimer_irq, ptimer_irq;
@@ -126,24 +123,34 @@ static void guest_validate_irq(unsigned int intid,
 	uint64_t xcnt = 0, xcnt_diff_us, cval = 0;
 	unsigned long xctl = 0;
 	unsigned int timer_irq = 0;
+	unsigned int accessor;
 
-	if (stage == GUEST_STAGE_VTIMER_CVAL ||
-		stage == GUEST_STAGE_VTIMER_TVAL) {
-		xctl = timer_get_ctl(VIRTUAL);
-		timer_set_ctl(VIRTUAL, CTL_IMASK);
-		xcnt = timer_get_cntct(VIRTUAL);
-		cval = timer_get_cval(VIRTUAL);
+	if (intid == IAR_SPURIOUS)
+		return;
+
+	switch (stage) {
+	case GUEST_STAGE_VTIMER_CVAL:
+	case GUEST_STAGE_VTIMER_TVAL:
+		accessor = VIRTUAL;
 		timer_irq = vtimer_irq;
-	} else if (stage == GUEST_STAGE_PTIMER_CVAL ||
-		stage == GUEST_STAGE_PTIMER_TVAL) {
-		xctl = timer_get_ctl(PHYSICAL);
-		timer_set_ctl(PHYSICAL, CTL_IMASK);
-		xcnt = timer_get_cntct(PHYSICAL);
-		cval = timer_get_cval(PHYSICAL);
+		break;
+	case GUEST_STAGE_PTIMER_CVAL:
+	case GUEST_STAGE_PTIMER_TVAL:
+		accessor = PHYSICAL;
 		timer_irq = ptimer_irq;
-	} else {
+		break;
+	default:
 		GUEST_ASSERT(0);
+		return;
 	}
+
+	xctl = timer_get_ctl(accessor);
+	if ((xctl & CTL_IMASK) || !(xctl & CTL_ENABLE))
+		return;
+
+	timer_set_ctl(accessor, CTL_IMASK);
+	xcnt = timer_get_cntct(accessor);
+	cval = timer_get_cval(accessor);
 
 	xcnt_diff_us = cycles_to_usec(xcnt - shared_data->xcnt);
 
@@ -153,6 +160,8 @@ static void guest_validate_irq(unsigned int intid,
 	/* Basic 'timer condition met' check */
 	GUEST_ASSERT_3(xcnt >= cval, xcnt, cval, xcnt_diff_us);
 	GUEST_ASSERT_1(xctl & CTL_ISTATUS, xctl);
+
+	WRITE_ONCE(shared_data->nr_iter, shared_data->nr_iter + 1);
 }
 
 static void guest_irq_handler(struct ex_regs *regs)
@@ -162,8 +171,6 @@ static void guest_irq_handler(struct ex_regs *regs)
 	struct test_vcpu_shared_data *shared_data = &vcpu_shared_data[cpu];
 
 	guest_validate_irq(intid, shared_data);
-
-	WRITE_ONCE(shared_data->nr_iter, shared_data->nr_iter + 1);
 
 	gic_set_eoi(intid);
 }
@@ -217,29 +224,32 @@ static void guest_code(void)
 
 static void *test_vcpu_run(void *arg)
 {
+	unsigned int vcpu_idx = (unsigned long)arg;
 	struct ucall uc;
-	struct test_vcpu *vcpu = arg;
+	struct kvm_vcpu *vcpu = vcpus[vcpu_idx];
 	struct kvm_vm *vm = vcpu->vm;
-	uint32_t vcpuid = vcpu->vcpuid;
-	struct test_vcpu_shared_data *shared_data = &vcpu_shared_data[vcpuid];
+	struct test_vcpu_shared_data *shared_data = &vcpu_shared_data[vcpu_idx];
 
-	vcpu_run(vm, vcpuid);
+	vcpu_run(vcpu);
 
 	/* Currently, any exit from guest is an indication of completion */
 	pthread_mutex_lock(&vcpu_done_map_lock);
-	set_bit(vcpuid, vcpu_done_map);
+	__set_bit(vcpu_idx, vcpu_done_map);
 	pthread_mutex_unlock(&vcpu_done_map_lock);
 
-	switch (get_ucall(vm, vcpuid, &uc)) {
+	switch (get_ucall(vcpu, &uc)) {
 	case UCALL_SYNC:
 	case UCALL_DONE:
 		break;
 	case UCALL_ABORT:
 		sync_global_from_guest(vm, *shared_data);
-		TEST_FAIL("%s at %s:%ld\n\tvalues: %lu, %lu; %lu, vcpu: %u; stage: %u; iter: %u",
-			(const char *)uc.args[0], __FILE__, uc.args[1],
-			uc.args[2], uc.args[3], uc.args[4], vcpuid,
-			shared_data->guest_stage, shared_data->nr_iter);
+		REPORT_GUEST_ASSERT_N(uc, "values: %lu, %lu; %lu, vcpu %u; stage; %u; iter: %u",
+				      GUEST_ASSERT_ARG(uc, 0),
+				      GUEST_ASSERT_ARG(uc, 1),
+				      GUEST_ASSERT_ARG(uc, 2),
+				      vcpu_idx,
+				      shared_data->guest_stage,
+				      shared_data->nr_iter);
 		break;
 	default:
 		TEST_FAIL("Unexpected guest exit\n");
@@ -265,7 +275,7 @@ static uint32_t test_get_pcpu(void)
 	return pcpu;
 }
 
-static int test_migrate_vcpu(struct test_vcpu *vcpu)
+static int test_migrate_vcpu(unsigned int vcpu_idx)
 {
 	int ret;
 	cpu_set_t cpuset;
@@ -274,15 +284,15 @@ static int test_migrate_vcpu(struct test_vcpu *vcpu)
 	CPU_ZERO(&cpuset);
 	CPU_SET(new_pcpu, &cpuset);
 
-	pr_debug("Migrating vCPU: %u to pCPU: %u\n", vcpu->vcpuid, new_pcpu);
+	pr_debug("Migrating vCPU: %u to pCPU: %u\n", vcpu_idx, new_pcpu);
 
-	ret = pthread_setaffinity_np(vcpu->pt_vcpu_run,
-					sizeof(cpuset), &cpuset);
+	ret = pthread_setaffinity_np(pt_vcpu_run[vcpu_idx],
+				     sizeof(cpuset), &cpuset);
 
 	/* Allow the error where the vCPU thread is already finished */
 	TEST_ASSERT(ret == 0 || ret == ESRCH,
-			"Failed to migrate the vCPU:%u to pCPU: %u; ret: %d\n",
-			vcpu->vcpuid, new_pcpu, ret);
+		    "Failed to migrate the vCPU:%u to pCPU: %u; ret: %d\n",
+		    vcpu_idx, new_pcpu, ret);
 
 	return ret;
 }
@@ -305,7 +315,7 @@ static void *test_vcpu_migration(void *arg)
 				continue;
 			}
 
-			test_migrate_vcpu(&test_vcpu[i]);
+			test_migrate_vcpu(i);
 		}
 	} while (test_args.nr_vcpus != n_done);
 
@@ -314,16 +324,17 @@ static void *test_vcpu_migration(void *arg)
 
 static void test_run(struct kvm_vm *vm)
 {
-	int i, ret;
 	pthread_t pt_vcpu_migration;
+	unsigned int i;
+	int ret;
 
 	pthread_mutex_init(&vcpu_done_map_lock, NULL);
 	vcpu_done_map = bitmap_zalloc(test_args.nr_vcpus);
 	TEST_ASSERT(vcpu_done_map, "Failed to allocate vcpu done bitmap\n");
 
-	for (i = 0; i < test_args.nr_vcpus; i++) {
-		ret = pthread_create(&test_vcpu[i].pt_vcpu_run, NULL,
-				test_vcpu_run, &test_vcpu[i]);
+	for (i = 0; i < (unsigned long)test_args.nr_vcpus; i++) {
+		ret = pthread_create(&pt_vcpu_run[i], NULL, test_vcpu_run,
+				     (void *)(unsigned long)i);
 		TEST_ASSERT(!ret, "Failed to create vCPU-%d pthread\n", i);
 	}
 
@@ -338,7 +349,7 @@ static void test_run(struct kvm_vm *vm)
 
 
 	for (i = 0; i < test_args.nr_vcpus; i++)
-		pthread_join(test_vcpu[i].pt_vcpu_run, NULL);
+		pthread_join(pt_vcpu_run[i], NULL);
 
 	if (test_args.migration_freq_ms)
 		pthread_join(pt_vcpu_migration, NULL);
@@ -349,12 +360,10 @@ static void test_run(struct kvm_vm *vm)
 static void test_init_timer_irq(struct kvm_vm *vm)
 {
 	/* Timer initid should be same for all the vCPUs, so query only vCPU-0 */
-	int vcpu0_fd = vcpu_get_fd(vm, 0);
-
-	kvm_device_access(vcpu0_fd, KVM_ARM_VCPU_TIMER_CTRL,
-			KVM_ARM_VCPU_TIMER_IRQ_PTIMER, &ptimer_irq, false);
-	kvm_device_access(vcpu0_fd, KVM_ARM_VCPU_TIMER_CTRL,
-			KVM_ARM_VCPU_TIMER_IRQ_VTIMER, &vtimer_irq, false);
+	vcpu_device_attr_get(vcpus[0], KVM_ARM_VCPU_TIMER_CTRL,
+			     KVM_ARM_VCPU_TIMER_IRQ_PTIMER, &ptimer_irq);
+	vcpu_device_attr_get(vcpus[0], KVM_ARM_VCPU_TIMER_CTRL,
+			     KVM_ARM_VCPU_TIMER_IRQ_VTIMER, &vtimer_irq);
 
 	sync_global_to_guest(vm, ptimer_irq);
 	sync_global_to_guest(vm, vtimer_irq);
@@ -370,25 +379,24 @@ static struct kvm_vm *test_vm_create(void)
 	unsigned int i;
 	int nr_vcpus = test_args.nr_vcpus;
 
-	vm = vm_create_default_with_vcpus(nr_vcpus, 0, 0, guest_code, NULL);
+	vm = vm_create_with_vcpus(nr_vcpus, guest_code, vcpus);
 
 	vm_init_descriptor_tables(vm);
 	vm_install_exception_handler(vm, VECTOR_IRQ_CURRENT, guest_irq_handler);
 
-	for (i = 0; i < nr_vcpus; i++) {
-		vcpu_init_descriptor_tables(vm, i);
-
-		test_vcpu[i].vcpuid = i;
-		test_vcpu[i].vm = vm;
+	if (!test_args.offset.reserved) {
+		if (kvm_has_cap(KVM_CAP_COUNTER_OFFSET))
+			vm_ioctl(vm, KVM_ARM_SET_COUNTER_OFFSET, &test_args.offset);
+		else
+			TEST_FAIL("no support for global offset\n");
 	}
 
-	ucall_init(vm, NULL);
+	for (i = 0; i < nr_vcpus; i++)
+		vcpu_init_descriptor_tables(vcpus[i]);
+
 	test_init_timer_irq(vm);
 	gic_fd = vgic_v3_setup(vm, nr_vcpus, 64, GICD_BASE_GPA, GICR_BASE_GPA);
-	if (gic_fd < 0) {
-		print_skip("Failed to create vgic-v3");
-		exit(KSFT_SKIP);
-	}
+	__TEST_REQUIRE(gic_fd >= 0, "Failed to create vgic-v3");
 
 	/* Make all the test's cmdline args visible to the guest */
 	sync_global_to_guest(vm, test_args);
@@ -414,6 +422,7 @@ static void test_print_help(char *name)
 		TIMER_TEST_PERIOD_MS_DEF);
 	pr_info("\t-m: Frequency (in ms) of vCPUs to migrate to different pCPU. 0 to turn off (default: %u)\n",
 		TIMER_TEST_MIGRATION_FREQ_MS);
+	pr_info("\t-o: Counter offset (in counter cycles, default: 0)\n");
 	pr_info("\t-h: print this help screen\n");
 }
 
@@ -421,39 +430,28 @@ static bool parse_args(int argc, char *argv[])
 {
 	int opt;
 
-	while ((opt = getopt(argc, argv, "hn:i:p:m:")) != -1) {
+	while ((opt = getopt(argc, argv, "hn:i:p:m:o:")) != -1) {
 		switch (opt) {
 		case 'n':
-			test_args.nr_vcpus = atoi(optarg);
-			if (test_args.nr_vcpus <= 0) {
-				pr_info("Positive value needed for -n\n");
-				goto err;
-			} else if (test_args.nr_vcpus > KVM_MAX_VCPUS) {
+			test_args.nr_vcpus = atoi_positive("Number of vCPUs", optarg);
+			if (test_args.nr_vcpus > KVM_MAX_VCPUS) {
 				pr_info("Max allowed vCPUs: %u\n",
 					KVM_MAX_VCPUS);
 				goto err;
 			}
 			break;
 		case 'i':
-			test_args.nr_iter = atoi(optarg);
-			if (test_args.nr_iter <= 0) {
-				pr_info("Positive value needed for -i\n");
-				goto err;
-			}
+			test_args.nr_iter = atoi_positive("Number of iterations", optarg);
 			break;
 		case 'p':
-			test_args.timer_period_ms = atoi(optarg);
-			if (test_args.timer_period_ms <= 0) {
-				pr_info("Positive value needed for -p\n");
-				goto err;
-			}
+			test_args.timer_period_ms = atoi_positive("Periodicity", optarg);
 			break;
 		case 'm':
-			test_args.migration_freq_ms = atoi(optarg);
-			if (test_args.migration_freq_ms < 0) {
-				pr_info("0 or positive value needed for -m\n");
-				goto err;
-			}
+			test_args.migration_freq_ms = atoi_non_negative("Frequency", optarg);
+			break;
+		case 'o':
+			test_args.offset.counter_offset = strtol(optarg, NULL, 0);
+			test_args.offset.reserved = 0;
 			break;
 		case 'h':
 		default:
@@ -472,16 +470,11 @@ int main(int argc, char *argv[])
 {
 	struct kvm_vm *vm;
 
-	/* Tell stdout not to buffer its content */
-	setbuf(stdout, NULL);
-
 	if (!parse_args(argc, argv))
 		exit(KSFT_SKIP);
 
-	if (test_args.migration_freq_ms && get_nprocs() < 2) {
-		print_skip("At least two physical CPUs needed for vCPU migration");
-		exit(KSFT_SKIP);
-	}
+	__TEST_REQUIRE(!test_args.migration_freq_ms || get_nprocs() >= 2,
+		       "At least two physical CPUs needed for vCPU migration");
 
 	vm = test_vm_create();
 	test_run(vm);

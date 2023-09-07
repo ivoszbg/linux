@@ -168,6 +168,7 @@ struct smu_temperature_range {
 	int mem_crit_max;
 	int mem_emergency_max;
 	int software_shutdown_temp;
+	int software_shutdown_temp_offset;
 };
 
 struct smu_state_validation_block {
@@ -199,29 +200,25 @@ struct smu_power_state {
 	struct smu_hw_power_state                     hardware;
 };
 
-enum smu_power_src_type
-{
+enum smu_power_src_type {
 	SMU_POWER_SOURCE_AC,
 	SMU_POWER_SOURCE_DC,
 	SMU_POWER_SOURCE_COUNT,
 };
 
-enum smu_ppt_limit_type
-{
+enum smu_ppt_limit_type {
 	SMU_DEFAULT_PPT_LIMIT = 0,
 	SMU_FAST_PPT_LIMIT,
 };
 
-enum smu_ppt_limit_level
-{
+enum smu_ppt_limit_level {
 	SMU_PPT_LIMIT_MIN = -1,
 	SMU_PPT_LIMIT_CURRENT,
 	SMU_PPT_LIMIT_DEFAULT,
 	SMU_PPT_LIMIT_MAX,
 };
 
-enum smu_memory_pool_size
-{
+enum smu_memory_pool_size {
     SMU_MEMORY_POOL_SIZE_ZERO   = 0,
     SMU_MEMORY_POOL_SIZE_256_MB = 0x10000000,
     SMU_MEMORY_POOL_SIZE_512_MB = 0x20000000,
@@ -281,8 +278,7 @@ struct smu_clock_info {
 	uint32_t max_bus_bandwidth;
 };
 
-struct smu_bios_boot_up_values
-{
+struct smu_bios_boot_up_values {
 	uint32_t			revision;
 	uint32_t			gfxclk;
 	uint32_t			uclk;
@@ -304,8 +300,7 @@ struct smu_bios_boot_up_values
 	uint32_t			firmware_caps;
 };
 
-enum smu_table_id
-{
+enum smu_table_id {
 	SMU_TABLE_PPTABLE = 0,
 	SMU_TABLE_WATERMARKS,
 	SMU_TABLE_CUSTOM_DPM,
@@ -325,8 +320,7 @@ enum smu_table_id
 	SMU_TABLE_COUNT,
 };
 
-struct smu_table_context
-{
+struct smu_table_context {
 	void				*power_play_table;
 	uint32_t			power_play_table_size;
 	void				*hardcode_pptable;
@@ -389,8 +383,7 @@ struct smu_power_context {
 };
 
 #define SMU_FEATURE_MAX	(64)
-struct smu_feature
-{
+struct smu_feature {
 	uint32_t feature_num;
 	DECLARE_BITMAP(supported, SMU_FEATURE_MAX);
 	DECLARE_BITMAP(allowed, SMU_FEATURE_MAX);
@@ -415,23 +408,21 @@ struct mclock_latency_table {
 	struct mclk_latency_entries  entries[MAX_REGULAR_DPM_NUM];
 };
 
-enum smu_reset_mode
-{
+enum smu_reset_mode {
     SMU_RESET_MODE_0,
     SMU_RESET_MODE_1,
     SMU_RESET_MODE_2,
 };
 
-enum smu_baco_state
-{
+enum smu_baco_state {
 	SMU_BACO_STATE_ENTER = 0,
 	SMU_BACO_STATE_EXIT,
 };
 
-struct smu_baco_context
-{
+struct smu_baco_context {
 	uint32_t state;
 	bool platform_support;
+	bool maco_support;
 };
 
 struct smu_freq_info {
@@ -476,8 +467,7 @@ struct stb_context {
 
 #define WORKLOAD_POLICY_MAX 7
 
-struct smu_context
-{
+struct smu_context {
 	struct amdgpu_device            *adev;
 	struct amdgpu_irq_src		irq_source;
 
@@ -563,6 +553,16 @@ struct smu_context
 	struct stb_context stb_context;
 
 	struct firmware pptable_firmware;
+
+	u32 param_reg;
+	u32 msg_reg;
+	u32 resp_reg;
+
+	u32 debug_param_reg;
+	u32 debug_msg_reg;
+	u32 debug_resp_reg;
+
+	struct delayed_work		swctf_delayed_work;
 };
 
 struct i2c_adapter;
@@ -698,6 +698,11 @@ struct pptable_funcs {
 	int (*dpm_set_jpeg_enable)(struct smu_context *smu, bool enable);
 
 	/**
+	 * @set_gfx_power_up_by_imu: Enable GFX engine with IMU
+	 */
+	int (*set_gfx_power_up_by_imu)(struct smu_context *smu);
+
+	/**
 	 * @read_sensor: Read data from a sensor.
 	 * &sensor: Sensor to read data from.
 	 * &data: Sensor reading.
@@ -705,6 +710,18 @@ struct pptable_funcs {
 	 */
 	int (*read_sensor)(struct smu_context *smu, enum amd_pp_sensors sensor,
 			   void *data, uint32_t *size);
+
+	/**
+	 * @get_apu_thermal_limit: get apu core limit from smu
+	 * &limit: current limit temperature in millidegrees Celsius
+	 */
+	int (*get_apu_thermal_limit)(struct smu_context *smu, uint32_t *limit);
+
+	/**
+	 * @set_apu_thermal_limit: update all controllers with new limit
+	 * &limit: limit temperature to be setted, in millidegrees Celsius
+	 */
+	int (*set_apu_thermal_limit)(struct smu_context *smu, uint32_t limit);
 
 	/**
 	 * @pre_display_config_changed: Prepare GPU for a display configuration
@@ -1102,6 +1119,22 @@ struct pptable_funcs {
 	uint32_t (*get_gfx_off_status)(struct smu_context *smu);
 
 	/**
+	 * @gfx_off_entrycount: total GFXOFF entry count at the time of
+	 * query since system power-up
+	 */
+	u32 (*get_gfx_off_entrycount)(struct smu_context *smu, uint64_t *entrycount);
+
+	/**
+	 * @set_gfx_off_residency: set 1 to start logging, 0 to stop logging
+	 */
+	u32 (*set_gfx_off_residency)(struct smu_context *smu, bool start);
+
+	/**
+	 * @get_gfx_off_residency: Average GFXOFF residency % during the logging interval
+	 */
+	u32 (*get_gfx_off_residency)(struct smu_context *smu, uint32_t *residency);
+
+	/**
 	 * @register_irq_handler: Register interupt request handlers.
 	 */
 	int (*register_irq_handler)(struct smu_context *smu);
@@ -1170,6 +1203,8 @@ struct pptable_funcs {
 	 * IPs reset varies by asic.
 	 */
 	int (*mode2_reset)(struct smu_context *smu);
+	/* for gfx feature enablement after mode2 reset */
+	int (*enable_gfx_features)(struct smu_context *smu);
 
 	/**
 	 * @get_dpm_ultimate_freq: Get the hard frequency range of a clock
@@ -1351,6 +1386,7 @@ typedef enum {
 	METRICS_PCIE_RATE,
 	METRICS_PCIE_WIDTH,
 	METRICS_CURR_FANPWM,
+	METRICS_CURR_SOCKETPOWER,
 } MetricsMember_t;
 
 enum smu_cmn2asic_mapping_type {
@@ -1360,6 +1396,14 @@ enum smu_cmn2asic_mapping_type {
 	CMN2ASIC_MAPPING_TABLE,
 	CMN2ASIC_MAPPING_PWR,
 	CMN2ASIC_MAPPING_WORKLOAD,
+};
+
+enum smu_baco_seq {
+	BACO_SEQ_BACO = 0,
+	BACO_SEQ_MSR,
+	BACO_SEQ_BAMACO,
+	BACO_SEQ_ULPS,
+	BACO_SEQ_COUNT,
 };
 
 #define MSG_MAP(msg, index, valid_in_vf) \
@@ -1438,9 +1482,17 @@ int smu_get_dpm_freq_range(struct smu_context *smu, enum smu_clk_type clk_type,
 int smu_set_soft_freq_range(struct smu_context *smu, enum smu_clk_type clk_type,
 			    uint32_t min, uint32_t max);
 
+int smu_set_gfx_power_up_by_imu(struct smu_context *smu);
+
 int smu_set_ac_dc(struct smu_context *smu);
 
 int smu_allow_xgmi_power_down(struct smu_context *smu, bool en);
+
+int smu_get_entrycount_gfxoff(struct smu_context *smu, u64 *value);
+
+int smu_get_residency_gfxoff(struct smu_context *smu, u32 *value);
+
+int smu_set_residency_gfxoff(struct smu_context *smu, bool value);
 
 int smu_get_status_gfxoff(struct smu_context *smu, uint32_t *value);
 

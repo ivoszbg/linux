@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 
 /* Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
- * Copyright (C) 2018-2020 Linaro Ltd.
+ * Copyright (C) 2018-2022 Linaro Ltd.
  */
 
 #include <linux/types.h>
@@ -124,7 +124,7 @@ static struct ipa_uc_mem_area *ipa_uc_shared(struct ipa *ipa)
 }
 
 /* Microcontroller event IPA interrupt handler */
-static void ipa_uc_event_handler(struct ipa *ipa, enum ipa_irq_id irq_id)
+static void ipa_uc_event_handler(struct ipa *ipa)
 {
 	struct ipa_uc_mem_area *shared = ipa_uc_shared(ipa);
 	struct device *dev = &ipa->pdev->dev;
@@ -138,7 +138,7 @@ static void ipa_uc_event_handler(struct ipa *ipa, enum ipa_irq_id irq_id)
 }
 
 /* Microcontroller response IPA interrupt handler */
-static void ipa_uc_response_hdlr(struct ipa *ipa, enum ipa_irq_id irq_id)
+static void ipa_uc_response_hdlr(struct ipa *ipa)
 {
 	struct ipa_uc_mem_area *shared = ipa_uc_shared(ipa);
 	struct device *dev = &ipa->pdev->dev;
@@ -170,13 +170,22 @@ static void ipa_uc_response_hdlr(struct ipa *ipa, enum ipa_irq_id irq_id)
 	}
 }
 
+void ipa_uc_interrupt_handler(struct ipa *ipa, enum ipa_irq_id irq_id)
+{
+	/* Silently ignore anything unrecognized */
+	if (irq_id == IPA_IRQ_UC_0)
+		ipa_uc_event_handler(ipa);
+	else if (irq_id == IPA_IRQ_UC_1)
+		ipa_uc_response_hdlr(ipa);
+}
+
 /* Configure the IPA microcontroller subsystem */
 void ipa_uc_config(struct ipa *ipa)
 {
 	ipa->uc_powered = false;
 	ipa->uc_loaded = false;
-	ipa_interrupt_add(ipa->interrupt, IPA_IRQ_UC_0, ipa_uc_event_handler);
-	ipa_interrupt_add(ipa->interrupt, IPA_IRQ_UC_1, ipa_uc_response_hdlr);
+	ipa_interrupt_enable(ipa, IPA_IRQ_UC_0);
+	ipa_interrupt_enable(ipa, IPA_IRQ_UC_1);
 }
 
 /* Inverse of ipa_uc_config() */
@@ -184,8 +193,8 @@ void ipa_uc_deconfig(struct ipa *ipa)
 {
 	struct device *dev = &ipa->pdev->dev;
 
-	ipa_interrupt_remove(ipa->interrupt, IPA_IRQ_UC_1);
-	ipa_interrupt_remove(ipa->interrupt, IPA_IRQ_UC_0);
+	ipa_interrupt_disable(ipa, IPA_IRQ_UC_1);
+	ipa_interrupt_disable(ipa, IPA_IRQ_UC_0);
 	if (ipa->uc_loaded)
 		ipa_power_retention(ipa, false);
 
@@ -222,7 +231,7 @@ void ipa_uc_power(struct ipa *ipa)
 static void send_uc_command(struct ipa *ipa, u32 command, u32 command_param)
 {
 	struct ipa_uc_mem_area *shared = ipa_uc_shared(ipa);
-	u32 offset;
+	const struct reg *reg;
 	u32 val;
 
 	/* Fill in the command data */
@@ -233,9 +242,10 @@ static void send_uc_command(struct ipa *ipa, u32 command, u32 command_param)
 	shared->response_param = 0;
 
 	/* Use an interrupt to tell the microcontroller the command is ready */
-	val = u32_encode_bits(1, UC_INTR_FMASK);
-	offset = ipa_reg_irq_uc_offset(ipa->version);
-	iowrite32(val, ipa->reg_virt + offset);
+	reg = ipa_reg(ipa, IPA_IRQ_UC);
+	val = reg_bit(reg, UC_INTR);
+
+	iowrite32(val, ipa->reg_virt + reg_offset(reg));
 }
 
 /* Tell the microcontroller the AP is shutting down */

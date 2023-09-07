@@ -33,7 +33,7 @@
  * key 0 controlling userspace addresses on radix
  * Key 3 on hash
  */
-#define MMU_FTR_BOOK3S_KUAP		ASM_CONST(0x00000200)
+#define MMU_FTR_KUAP		ASM_CONST(0x00000200)
 
 /*
  * Supports KUEP feature
@@ -96,15 +96,6 @@
  */
 #define MMU_FTR_NEED_DTLB_SW_LRU	ASM_CONST(0x00200000)
 
-/* Enable use of TLB reservation.  Processor should support tlbsrx.
- * instruction and MAS0[WQ].
- */
-#define MMU_FTR_USE_TLBRSRV		ASM_CONST(0x00800000)
-
-/* Use paired MAS registers (MAS7||MAS3, etc.)
- */
-#define MMU_FTR_USE_PAIRED_MAS		ASM_CONST(0x01000000)
-
 /* Doesn't support the B bit (1T segment) in SLBIE
  */
 #define MMU_FTR_NO_SLBIE_B		ASM_CONST(0x02000000)
@@ -129,6 +120,9 @@
  */
 #define MMU_FTR_1T_SEGMENT		ASM_CONST(0x40000000)
 
+// NX paste RMA reject in DSI
+#define MMU_FTR_NX_DSI			ASM_CONST(0x80000000)
+
 /* MMU feature bit sets for various CPUs */
 #define MMU_FTRS_DEFAULT_HPTE_ARCH_V2	(MMU_FTR_HPTE_TABLE | MMU_FTR_TLBIEL | MMU_FTR_16M_PAGE)
 #define MMU_FTRS_POWER		MMU_FTRS_DEFAULT_HPTE_ARCH_V2
@@ -150,11 +144,6 @@
 
 typedef pte_t *pgtable_t;
 
-#ifdef CONFIG_PPC_FSL_BOOK3E
-#include <asm/percpu.h>
-DECLARE_PER_CPU(int, next_tlbcam_idx);
-#endif
-
 enum {
 	MMU_FTRS_POSSIBLE =
 #if defined(CONFIG_PPC_BOOK3S_604)
@@ -171,7 +160,7 @@ enum {
 #elif defined(CONFIG_44x)
 		MMU_FTR_TYPE_44x |
 #endif
-#ifdef CONFIG_E500
+#ifdef CONFIG_PPC_E500
 		MMU_FTR_TYPE_FSL_E | MMU_FTR_BIG_PHYS | MMU_FTR_USE_TLBILX |
 #endif
 #ifdef CONFIG_PPC_BOOK3S_32
@@ -179,9 +168,6 @@ enum {
 #endif
 #ifdef CONFIG_PPC_83xx
 		MMU_FTR_NEED_DTLB_SW_LRU |
-#endif
-#ifdef CONFIG_PPC_BOOK3E_64
-		MMU_FTR_USE_TLBRSRV | MMU_FTR_USE_PAIRED_MAS |
 #endif
 #ifdef CONFIG_PPC_BOOK3S_64
 		MMU_FTR_KERNEL_RO |
@@ -193,11 +179,11 @@ enum {
 #endif
 #ifdef CONFIG_PPC_RADIX_MMU
 		MMU_FTR_TYPE_RADIX |
-		MMU_FTR_GTSE |
+		MMU_FTR_GTSE | MMU_FTR_NX_DSI |
 #endif /* CONFIG_PPC_RADIX_MMU */
 #endif
 #ifdef CONFIG_PPC_KUAP
-	MMU_FTR_BOOK3S_KUAP |
+	MMU_FTR_KUAP |
 #endif /* CONFIG_PPC_KUAP */
 #ifdef CONFIG_PPC_MEM_KEYS
 	MMU_FTR_PKEY |
@@ -223,7 +209,7 @@ enum {
 #elif defined(CONFIG_44x)
 #define MMU_FTRS_ALWAYS		MMU_FTR_TYPE_44x
 #endif
-#ifdef CONFIG_E500
+#ifdef CONFIG_PPC_E500
 #define MMU_FTRS_ALWAYS		MMU_FTR_TYPE_FSL_E
 #endif
 

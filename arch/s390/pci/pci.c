@@ -61,6 +61,12 @@ DEFINE_STATIC_KEY_FALSE(have_mio);
 
 static struct kmem_cache *zdev_fmb_cache;
 
+/* AEN structures that must be preserved over KVM module re-insertion */
+union zpci_sic_iib *zpci_aipb;
+EXPORT_SYMBOL_GPL(zpci_aipb);
+struct airq_iv *zpci_aif_sbv;
+EXPORT_SYMBOL_GPL(zpci_aif_sbv);
+
 struct zpci_dev *get_zdev_by_fid(u32 fid)
 {
 	struct zpci_dev *tmp, *zdev = NULL;
@@ -110,21 +116,23 @@ EXPORT_SYMBOL_GPL(pci_proc_domain);
 
 /* Modify PCI: Register I/O address translation parameters */
 int zpci_register_ioat(struct zpci_dev *zdev, u8 dmaas,
-		       u64 base, u64 limit, u64 iota)
+		       u64 base, u64 limit, u64 iota, u8 *status)
 {
 	u64 req = ZPCI_CREATE_REQ(zdev->fh, dmaas, ZPCI_MOD_FC_REG_IOAT);
 	struct zpci_fib fib = {0};
-	u8 cc, status;
+	u8 cc;
 
 	WARN_ON_ONCE(iota & 0x3fff);
 	fib.pba = base;
 	fib.pal = limit;
 	fib.iota = iota | ZPCI_IOTA_RTTO_FLAG;
-	cc = zpci_mod_fc(req, &fib, &status);
+	fib.gd = zdev->gisa;
+	cc = zpci_mod_fc(req, &fib, status);
 	if (cc)
-		zpci_dbg(3, "reg ioat fid:%x, cc:%d, status:%d\n", zdev->fid, cc, status);
+		zpci_dbg(3, "reg ioat fid:%x, cc:%d, status:%d\n", zdev->fid, cc, *status);
 	return cc;
 }
+EXPORT_SYMBOL_GPL(zpci_register_ioat);
 
 /* Modify PCI: Unregister I/O address translation parameters */
 int zpci_unregister_ioat(struct zpci_dev *zdev, u8 dmaas)
@@ -132,6 +140,8 @@ int zpci_unregister_ioat(struct zpci_dev *zdev, u8 dmaas)
 	u64 req = ZPCI_CREATE_REQ(zdev->fh, dmaas, ZPCI_MOD_FC_DEREG_IOAT);
 	struct zpci_fib fib = {0};
 	u8 cc, status;
+
+	fib.gd = zdev->gisa;
 
 	cc = zpci_mod_fc(req, &fib, &status);
 	if (cc)
@@ -160,6 +170,7 @@ int zpci_fmb_enable_device(struct zpci_dev *zdev)
 	atomic64_set(&zdev->unmapped_pages, 0);
 
 	fib.fmb_addr = virt_to_phys(zdev->fmb);
+	fib.gd = zdev->gisa;
 	cc = zpci_mod_fc(req, &fib, &status);
 	if (cc) {
 		kmem_cache_free(zdev_fmb_cache, zdev->fmb);
@@ -177,6 +188,8 @@ int zpci_fmb_disable_device(struct zpci_dev *zdev)
 
 	if (!zdev->fmb)
 		return -EINVAL;
+
+	fib.gd = zdev->gisa;
 
 	/* Function measurement is disabled if fmb address is zero */
 	cc = zpci_mod_fc(req, &fib, &status);
@@ -231,62 +244,25 @@ void __iowrite64_copy(void __iomem *to, const void *from, size_t count)
        zpci_memcpy_toio(to, from, count);
 }
 
-static void __iomem *__ioremap(phys_addr_t addr, size_t size, pgprot_t prot)
+void __iomem *ioremap_prot(phys_addr_t phys_addr, size_t size,
+			   unsigned long prot)
 {
-	unsigned long offset, vaddr;
-	struct vm_struct *area;
-	phys_addr_t last_addr;
-
-	last_addr = addr + size - 1;
-	if (!size || last_addr < addr)
-		return NULL;
-
+	/*
+	 * When PCI MIO instructions are unavailable the "physical" address
+	 * encodes a hint for accessing the PCI memory space it represents.
+	 * Just pass it unchanged such that ioread/iowrite can decode it.
+	 */
 	if (!static_branch_unlikely(&have_mio))
-		return (void __iomem *) addr;
+		return (void __iomem *)phys_addr;
 
-	offset = addr & ~PAGE_MASK;
-	addr &= PAGE_MASK;
-	size = PAGE_ALIGN(size + offset);
-	area = get_vm_area(size, VM_IOREMAP);
-	if (!area)
-		return NULL;
-
-	vaddr = (unsigned long) area->addr;
-	if (ioremap_page_range(vaddr, vaddr + size, addr, prot)) {
-		free_vm_area(area);
-		return NULL;
-	}
-	return (void __iomem *) ((unsigned long) area->addr + offset);
-}
-
-void __iomem *ioremap_prot(phys_addr_t addr, size_t size, unsigned long prot)
-{
-	return __ioremap(addr, size, __pgprot(prot));
+	return generic_ioremap_prot(phys_addr, size, __pgprot(prot));
 }
 EXPORT_SYMBOL(ioremap_prot);
-
-void __iomem *ioremap(phys_addr_t addr, size_t size)
-{
-	return __ioremap(addr, size, PAGE_KERNEL);
-}
-EXPORT_SYMBOL(ioremap);
-
-void __iomem *ioremap_wc(phys_addr_t addr, size_t size)
-{
-	return __ioremap(addr, size, pgprot_writecombine(PAGE_KERNEL));
-}
-EXPORT_SYMBOL(ioremap_wc);
-
-void __iomem *ioremap_wt(phys_addr_t addr, size_t size)
-{
-	return __ioremap(addr, size, pgprot_writethrough(PAGE_KERNEL));
-}
-EXPORT_SYMBOL(ioremap_wt);
 
 void iounmap(volatile void __iomem *addr)
 {
 	if (static_branch_likely(&have_mio))
-		vunmap((__force void *) ((unsigned long) addr & PAGE_MASK));
+		generic_iounmap(addr);
 }
 EXPORT_SYMBOL(iounmap);
 
@@ -531,8 +507,7 @@ static struct resource *__alloc_res(struct zpci_dev *zdev, unsigned long start,
 	return r;
 }
 
-int zpci_setup_bus_resources(struct zpci_dev *zdev,
-			     struct list_head *resources)
+int zpci_setup_bus_resources(struct zpci_dev *zdev)
 {
 	unsigned long addr, size, flags;
 	struct resource *res;
@@ -568,7 +543,6 @@ int zpci_setup_bus_resources(struct zpci_dev *zdev,
 			return -ENOMEM;
 		}
 		zdev->bars[i].res = res;
-		pci_add_resource(resources, res);
 	}
 	zdev->has_resources = 1;
 
@@ -577,17 +551,23 @@ int zpci_setup_bus_resources(struct zpci_dev *zdev,
 
 static void zpci_cleanup_bus_resources(struct zpci_dev *zdev)
 {
+	struct resource *res;
 	int i;
 
+	pci_lock_rescan_remove();
 	for (i = 0; i < PCI_STD_NUM_BARS; i++) {
-		if (!zdev->bars[i].size || !zdev->bars[i].res)
+		res = zdev->bars[i].res;
+		if (!res)
 			continue;
 
+		release_resource(res);
+		pci_bus_remove_resource(zdev->zbus->bus, res);
 		zpci_free_iomap(zdev, zdev->bars[i].map_idx);
-		release_resource(zdev->bars[i].res);
-		kfree(zdev->bars[i].res);
+		zdev->bars[i].res = NULL;
+		kfree(res);
 	}
 	zdev->has_resources = 0;
+	pci_unlock_rescan_remove();
 }
 
 int pcibios_device_add(struct pci_dev *pdev)
@@ -700,6 +680,7 @@ int zpci_enable_device(struct zpci_dev *zdev)
 		zpci_update_fh(zdev, fh);
 	return rc;
 }
+EXPORT_SYMBOL_GPL(zpci_enable_device);
 
 int zpci_disable_device(struct zpci_dev *zdev)
 {
@@ -723,6 +704,7 @@ int zpci_disable_device(struct zpci_dev *zdev)
 	}
 	return rc;
 }
+EXPORT_SYMBOL_GPL(zpci_disable_device);
 
 /**
  * zpci_hot_reset_device - perform a reset of the given zPCI function
@@ -749,6 +731,7 @@ int zpci_disable_device(struct zpci_dev *zdev)
  */
 int zpci_hot_reset_device(struct zpci_dev *zdev)
 {
+	u8 status;
 	int rc;
 
 	zpci_dbg(3, "rst fid:%x, fh:%x\n", zdev->fid, zdev->fh);
@@ -772,7 +755,7 @@ int zpci_hot_reset_device(struct zpci_dev *zdev)
 
 	if (zdev->dma_table)
 		rc = zpci_register_ioat(zdev, 0, zdev->start_dma, zdev->end_dma,
-					virt_to_phys(zdev->dma_table));
+					virt_to_phys(zdev->dma_table), &status);
 	else
 		rc = zpci_dma_init_device(zdev);
 	if (rc) {
@@ -816,6 +799,7 @@ struct zpci_dev *zpci_create_device(u32 fid, u32 fh, enum zpci_state state)
 
 	kref_init(&zdev->kref);
 	mutex_init(&zdev->lock);
+	mutex_init(&zdev->kzdev_lock);
 
 	rc = zpci_init_iommu(zdev);
 	if (rc)
@@ -853,32 +837,15 @@ bool zpci_is_device_configured(struct zpci_dev *zdev)
  * @fh: The general function handle supplied by the platform
  *
  * Given a device in the configuration state Configured, enables, scans and
- * adds it to the common code PCI subsystem if possible. If the PCI device is
- * parked because we can not yet create a PCI bus because we have not seen
- * function 0, it is ignored but will be scanned once function 0 appears.
- * If any failure occurs, the zpci_dev is left disabled.
+ * adds it to the common code PCI subsystem if possible. If any failure occurs,
+ * the zpci_dev is left disabled.
  *
  * Return: 0 on success, or an error code otherwise
  */
 int zpci_scan_configured_device(struct zpci_dev *zdev, u32 fh)
 {
-	int rc;
-
 	zpci_update_fh(zdev, fh);
-	/* the PCI function will be scanned once function 0 appears */
-	if (!zdev->zbus->bus)
-		return 0;
-
-	/* For function 0 on a multi-function bus scan whole bus as we might
-	 * have to pick up existing functions waiting for it to allow creating
-	 * the PCI bus
-	 */
-	if (zdev->devfn == 0 && zdev->zbus->multifunction)
-		rc = zpci_bus_scan_bus(zdev->zbus);
-	else
-		rc = zpci_bus_scan_device(zdev);
-
-	return rc;
+	return zpci_bus_scan_device(zdev);
 }
 
 /**
@@ -979,7 +946,7 @@ void zpci_release_device(struct kref *kref)
 		break;
 	}
 	zpci_dbg(3, "rem fid:%x\n", zdev->fid);
-	kfree(zdev);
+	kfree_rcu(zdev, rcu);
 }
 
 int zpci_report_error(struct pci_dev *pdev,

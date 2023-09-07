@@ -124,7 +124,7 @@ static char *csi_clock_name[] = {
 #define DEFAULT_SCLK_CSIS_FREQ	166000000UL
 
 static const char * const csis_supply_name[] = {
-	"vddcore",  /* CSIS Core (1.0V, 1.1V or 1.2V) suppply */
+	"vddcore",  /* CSIS Core (1.0V, 1.1V or 1.2V) supply */
 	"vddio",    /* CSIS I/O and PLL (1.8V) supply */
 };
 #define CSIS_NUM_SUPPLIES ARRAY_SIZE(csis_supply_name)
@@ -975,7 +975,7 @@ static int s5pcsis_runtime_resume(struct device *dev)
 }
 #endif
 
-static int s5pcsis_remove(struct platform_device *pdev)
+static void s5pcsis_remove(struct platform_device *pdev)
 {
 	struct v4l2_subdev *sd = platform_get_drvdata(pdev);
 	struct csis_state *state = sd_to_csis_state(sd);
@@ -987,8 +987,6 @@ static int s5pcsis_remove(struct platform_device *pdev)
 	s5pcsis_clk_put(state);
 
 	media_entity_cleanup(&state->sd.entity);
-
-	return 0;
 }
 
 static const struct dev_pm_ops s5pcsis_pm_ops = {
@@ -1022,7 +1020,7 @@ MODULE_DEVICE_TABLE(of, s5pcsis_of_match);
 
 static struct platform_driver s5pcsis_driver = {
 	.probe		= s5pcsis_probe,
-	.remove		= s5pcsis_remove,
+	.remove_new	= s5pcsis_remove,
 	.driver		= {
 		.of_match_table = s5pcsis_of_match,
 		.name		= CSIS_DRIVER_NAME,

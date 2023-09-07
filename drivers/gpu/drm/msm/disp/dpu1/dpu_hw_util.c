@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
-/* Copyright (c) 2015-2018, The Linux Foundation. All rights reserved.
+/*
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2015-2018, The Linux Foundation. All rights reserved.
  */
 #define pr_fmt(fmt)	"[drm:%s:%d] " fmt, __func__, __LINE__
 
@@ -71,6 +73,19 @@ static u32 dpu_hw_util_log_mask = DPU_DBG_MASK_NONE;
 #define QSEED3LITE_SEP_LUT_SIZE \
 	        (QSEED3LITE_LUT_SIZE * QSEED3LITE_SEPARABLE_LUTS * sizeof(u32))
 
+/* QOS_LUT */
+#define QOS_DANGER_LUT                    0x00
+#define QOS_SAFE_LUT                      0x04
+#define QOS_CREQ_LUT                      0x08
+#define QOS_QOS_CTRL                      0x0C
+#define QOS_CREQ_LUT_0                    0x14
+#define QOS_CREQ_LUT_1                    0x18
+
+/* QOS_QOS_CTRL */
+#define QOS_QOS_CTRL_DANGER_SAFE_EN       BIT(0)
+#define QOS_QOS_CTRL_DANGER_VBLANK_MASK   GENMASK(5, 4)
+#define QOS_QOS_CTRL_VBLANK_EN            BIT(16)
+#define QOS_QOS_CTRL_CREQ_VBLANK_MASK     GENMASK(21, 20)
 
 void dpu_reg_write(struct dpu_hw_blk_reg_map *c,
 		u32 reg_off,
@@ -80,13 +95,13 @@ void dpu_reg_write(struct dpu_hw_blk_reg_map *c,
 	/* don't need to mutex protect this */
 	if (c->log_mask & dpu_hw_util_log_mask)
 		DPU_DEBUG_DRIVER("[%s:0x%X] <= 0x%X\n",
-				name, c->blk_off + reg_off, val);
-	writel_relaxed(val, c->base_off + c->blk_off + reg_off);
+				name, reg_off, val);
+	writel_relaxed(val, c->blk_addr + reg_off);
 }
 
 int dpu_reg_read(struct dpu_hw_blk_reg_map *c, u32 reg_off)
 {
-	return readl_relaxed(c->base_off + c->blk_off + reg_off);
+	return readl_relaxed(c->blk_addr + reg_off);
 }
 
 u32 *dpu_hw_util_get_log_mask_ptr(void)
@@ -446,4 +461,88 @@ u64 _dpu_hw_get_qos_lut(const struct dpu_qos_lut_tbl *tbl,
 		return tbl->entries[i-1].lut;
 
 	return 0;
+}
+
+void _dpu_hw_setup_qos_lut(struct dpu_hw_blk_reg_map *c, u32 offset,
+			   bool qos_8lvl,
+			   const struct dpu_hw_qos_cfg *cfg)
+{
+	DPU_REG_WRITE(c, offset + QOS_DANGER_LUT, cfg->danger_lut);
+	DPU_REG_WRITE(c, offset + QOS_SAFE_LUT, cfg->safe_lut);
+
+	if (qos_8lvl) {
+		DPU_REG_WRITE(c, offset + QOS_CREQ_LUT_0, cfg->creq_lut);
+		DPU_REG_WRITE(c, offset + QOS_CREQ_LUT_1, cfg->creq_lut >> 32);
+	} else {
+		DPU_REG_WRITE(c, offset + QOS_CREQ_LUT, cfg->creq_lut);
+	}
+
+	DPU_REG_WRITE(c, offset + QOS_QOS_CTRL,
+		      cfg->danger_safe_en ? QOS_QOS_CTRL_DANGER_SAFE_EN : 0);
+}
+
+void dpu_hw_setup_misr(struct dpu_hw_blk_reg_map *c,
+		u32 misr_ctrl_offset,
+		bool enable, u32 frame_count)
+{
+	u32 config = 0;
+
+	DPU_REG_WRITE(c, misr_ctrl_offset, MISR_CTRL_STATUS_CLEAR);
+
+	/* Clear old MISR value (in case it's read before a new value is calculated)*/
+	wmb();
+
+	if (enable) {
+		config = (frame_count & MISR_FRAME_COUNT_MASK) |
+			MISR_CTRL_ENABLE | MISR_CTRL_FREE_RUN_MASK;
+
+		DPU_REG_WRITE(c, misr_ctrl_offset, config);
+	} else {
+		DPU_REG_WRITE(c, misr_ctrl_offset, 0);
+	}
+
+}
+
+int dpu_hw_collect_misr(struct dpu_hw_blk_reg_map *c,
+		u32 misr_ctrl_offset,
+		u32 misr_signature_offset,
+		u32 *misr_value)
+{
+	u32 ctrl = 0;
+
+	if (!misr_value)
+		return -EINVAL;
+
+	ctrl = DPU_REG_READ(c, misr_ctrl_offset);
+
+	if (!(ctrl & MISR_CTRL_ENABLE))
+		return -ENODATA;
+
+	if (!(ctrl & MISR_CTRL_STATUS))
+		return -EINVAL;
+
+	*misr_value = DPU_REG_READ(c, misr_signature_offset);
+
+	return 0;
+}
+
+#define CDP_ENABLE		BIT(0)
+#define CDP_UBWC_META_ENABLE	BIT(1)
+#define CDP_TILE_AMORTIZE_ENABLE BIT(2)
+#define CDP_PRELOAD_AHEAD_64	BIT(3)
+
+void dpu_setup_cdp(struct dpu_hw_blk_reg_map *c, u32 offset,
+		   const struct dpu_format *fmt, bool enable)
+{
+	u32 cdp_cntl = CDP_PRELOAD_AHEAD_64;
+
+	if (enable)
+		cdp_cntl |= CDP_ENABLE;
+	if (DPU_FORMAT_IS_UBWC(fmt))
+		cdp_cntl |= CDP_UBWC_META_ENABLE;
+	if (DPU_FORMAT_IS_UBWC(fmt) ||
+	    DPU_FORMAT_IS_TILE(fmt))
+		cdp_cntl |= CDP_TILE_AMORTIZE_ENABLE;
+
+	DPU_REG_WRITE(c, offset, cdp_cntl);
 }

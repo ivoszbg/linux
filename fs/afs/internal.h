@@ -9,6 +9,7 @@
 #include <linux/kernel.h>
 #include <linux/ktime.h>
 #include <linux/fs.h>
+#include <linux/filelock.h>
 #include <linux/pagemap.h>
 #include <linux/rxrpc.h>
 #include <linux/key.h>
@@ -122,12 +123,12 @@ struct afs_call {
 	};
 	struct afs_operation	*op;
 	unsigned int		server_index;
-	atomic_t		usage;
+	refcount_t		ref;
 	enum afs_call_state	state;
 	spinlock_t		state_lock;
 	int			error;		/* error code */
 	u32			abort_code;	/* Remote abort ID or 0 */
-	unsigned int		max_lifespan;	/* Maximum lifespan to set if not 0 */
+	unsigned int		max_lifespan;	/* Maximum lifespan in secs to set if not 0 */
 	unsigned		request_size;	/* size of request data */
 	unsigned		reply_max;	/* maximum size of reply */
 	unsigned		count2;		/* count used in unmarshalling */
@@ -137,7 +138,6 @@ struct afs_call {
 	bool			need_attention;	/* T if RxRPC poked us */
 	bool			async;		/* T if asynchronous */
 	bool			upgrade;	/* T to request service upgrade */
-	bool			have_reply_time; /* T if have got reply_time */
 	bool			intr;		/* T if interruptible */
 	bool			unmarshalling_error; /* T if an unmarshalling error occurred */
 	u16			service_id;	/* Actual service ID (after upgrade) */
@@ -151,7 +151,7 @@ struct afs_call {
 		} __attribute__((packed));
 		__be64		tmp64;
 	};
-	ktime_t			reply_time;	/* Time of first reply packet */
+	ktime_t			issue_time;	/* Time of issue of operation */
 };
 
 struct afs_call_type {
@@ -365,7 +365,7 @@ struct afs_cell {
 	struct hlist_node	proc_link;	/* /proc cell list link */
 	time64_t		dns_expiry;	/* Time AFSDB/SRV record expires */
 	time64_t		last_inactive;	/* Time of last drop of usage count */
-	atomic_t		ref;		/* Struct refcount */
+	refcount_t		ref;		/* Struct refcount */
 	atomic_t		active;		/* Active usage counter */
 	unsigned long		flags;
 #define AFS_CELL_FL_NO_GC	0		/* The cell was added manually, don't auto-gc */
@@ -410,7 +410,7 @@ struct afs_vlserver {
 #define AFS_VLSERVER_FL_IS_YFS	2		/* Server is YFS not AFS */
 #define AFS_VLSERVER_FL_RESPONDING 3		/* VL server is responding */
 	rwlock_t		lock;		/* Lock on addresses */
-	atomic_t		usage;
+	refcount_t		ref;
 	unsigned int		rtt;		/* Server's current RTT in uS */
 
 	/* Probe state */
@@ -446,7 +446,7 @@ struct afs_vlserver_entry {
 
 struct afs_vlserver_list {
 	struct rcu_head		rcu;
-	atomic_t		usage;
+	refcount_t		ref;
 	u8			nr_servers;
 	u8			index;		/* Server currently in use */
 	u8			preferred;	/* Preferred server */
@@ -517,7 +517,7 @@ struct afs_server {
 #define AFS_SERVER_FL_NO_IBULK	17		/* Fileserver doesn't support FS.InlineBulkStatus */
 #define AFS_SERVER_FL_NO_RM2	18		/* Fileserver doesn't support YFS.RemoveFile2 */
 #define AFS_SERVER_FL_HAS_FS64	19		/* Fileserver supports FS.{Fetch,Store}Data64 */
-	atomic_t		ref;		/* Object refcount */
+	refcount_t		ref;		/* Object refcount */
 	atomic_t		active;		/* Active user count */
 	u32			addr_version;	/* Address list version */
 	unsigned int		rtt;		/* Server's current RTT in uS */
@@ -571,7 +571,7 @@ struct afs_volume {
 		struct rcu_head	rcu;
 		afs_volid_t	vid;		/* volume ID */
 	};
-	atomic_t		usage;
+	refcount_t		ref;
 	time64_t		update_at;	/* Time at which to next update */
 	struct afs_cell		*cell;		/* Cell to which belongs (pins ref) */
 	struct rb_node		cell_node;	/* Link in cell->volumes */
@@ -681,6 +681,8 @@ static inline void afs_vnode_set_cache(struct afs_vnode *vnode,
 {
 #ifdef CONFIG_AFS_FSCACHE
 	vnode->netfs.cache = cookie;
+	if (cookie)
+		mapping_set_release_always(vnode->netfs.inode.i_mapping);
 #endif
 }
 
@@ -973,13 +975,6 @@ extern void afs_merge_fs_addr4(struct afs_addr_list *, __be32, u16);
 extern void afs_merge_fs_addr6(struct afs_addr_list *, __be32 *, u16);
 
 /*
- * cache.c
- */
-#ifdef CONFIG_AFS_FSCACHE
-extern struct fscache_netfs afs_cache_netfs;
-#endif
-
-/*
  * callback.c
  */
 extern void afs_invalidate_mmap_work(struct work_struct *);
@@ -1178,9 +1173,10 @@ extern struct inode *afs_iget(struct afs_operation *, struct afs_vnode_param *);
 extern struct inode *afs_root_iget(struct super_block *, struct key *);
 extern bool afs_check_validity(struct afs_vnode *);
 extern int afs_validate(struct afs_vnode *, struct key *);
-extern int afs_getattr(struct user_namespace *mnt_userns, const struct path *,
+bool afs_pagecache_valid(struct afs_vnode *);
+extern int afs_getattr(struct mnt_idmap *idmap, const struct path *,
 		       struct kstat *, u32, unsigned int);
-extern int afs_setattr(struct user_namespace *mnt_userns, struct dentry *, struct iattr *);
+extern int afs_setattr(struct mnt_idmap *idmap, struct dentry *, struct iattr *);
 extern void afs_evict_inode(struct inode *);
 extern int afs_drop_inode(struct inode *);
 
@@ -1302,7 +1298,7 @@ static inline void afs_extract_begin(struct afs_call *call, void *buf, size_t si
 	call->iov_len = size;
 	call->kvec[0].iov_base = buf;
 	call->kvec[0].iov_len = size;
-	iov_iter_kvec(&call->def_iter, READ, call->kvec, 1, size);
+	iov_iter_kvec(&call->def_iter, ITER_DEST, call->kvec, 1, size);
 }
 
 static inline void afs_extract_to_tmp(struct afs_call *call)
@@ -1320,7 +1316,7 @@ static inline void afs_extract_to_tmp64(struct afs_call *call)
 static inline void afs_extract_discard(struct afs_call *call, size_t size)
 {
 	call->iov_len = size;
-	iov_iter_discard(&call->def_iter, READ, size);
+	iov_iter_discard(&call->def_iter, ITER_DEST, size);
 }
 
 static inline void afs_extract_to_buf(struct afs_call *call, size_t size)
@@ -1392,11 +1388,10 @@ extern void afs_put_permits(struct afs_permits *);
 extern void afs_clear_permits(struct afs_vnode *);
 extern void afs_cache_permit(struct afs_vnode *, struct key *, unsigned int,
 			     struct afs_status_cb *);
-extern void afs_zap_permits(struct rcu_head *);
 extern struct key *afs_request_key(struct afs_cell *);
 extern struct key *afs_request_key_rcu(struct afs_cell *);
 extern int afs_check_permit(struct afs_vnode *, struct key *, afs_access_t *);
-extern int afs_permission(struct user_namespace *, struct inode *, int);
+extern int afs_permission(struct mnt_idmap *, struct inode *, int);
 extern void __exit afs_clean_up_permit_cache(void);
 
 /*
@@ -1493,14 +1488,14 @@ extern int afs_end_vlserver_operation(struct afs_vl_cursor *);
  */
 static inline struct afs_vlserver *afs_get_vlserver(struct afs_vlserver *vlserver)
 {
-	atomic_inc(&vlserver->usage);
+	refcount_inc(&vlserver->ref);
 	return vlserver;
 }
 
 static inline struct afs_vlserver_list *afs_get_vlserverlist(struct afs_vlserver_list *vllist)
 {
 	if (vllist)
-		atomic_inc(&vllist->usage);
+		refcount_inc(&vllist->ref);
 	return vllist;
 }
 

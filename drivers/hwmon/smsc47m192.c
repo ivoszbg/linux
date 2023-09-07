@@ -582,7 +582,7 @@ static int smsc47m192_detect(struct i2c_client *client,
 		return -ENODEV;
 	}
 
-	strlcpy(info->type, "smsc47m192", I2C_NAME_SIZE);
+	strscpy(info->type, "smsc47m192", I2C_NAME_SIZE);
 
 	return 0;
 }
@@ -628,7 +628,7 @@ static struct i2c_driver smsc47m192_driver = {
 	.driver = {
 		.name	= "smsc47m192",
 	},
-	.probe_new	= smsc47m192_probe,
+	.probe		= smsc47m192_probe,
 	.id_table	= smsc47m192_id,
 	.detect		= smsc47m192_detect,
 	.address_list	= normal_i2c,

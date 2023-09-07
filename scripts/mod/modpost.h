@@ -26,7 +26,6 @@
 #define Elf_Shdr    Elf32_Shdr
 #define Elf_Sym     Elf32_Sym
 #define Elf_Addr    Elf32_Addr
-#define Elf_Sword   Elf64_Sword
 #define Elf_Section Elf32_Half
 #define ELF_ST_BIND ELF32_ST_BIND
 #define ELF_ST_TYPE ELF32_ST_TYPE
@@ -41,7 +40,6 @@
 #define Elf_Shdr    Elf64_Shdr
 #define Elf_Sym     Elf64_Sym
 #define Elf_Addr    Elf64_Addr
-#define Elf_Sword   Elf64_Sxword
 #define Elf_Section Elf64_Half
 #define ELF_ST_BIND ELF64_ST_BIND
 #define ELF_ST_TYPE ELF64_ST_TYPE
@@ -51,28 +49,6 @@
 #define ELF_R_SYM   ELF64_R_SYM
 #define ELF_R_TYPE  ELF64_R_TYPE
 #endif
-
-/* The 64-bit MIPS ELF ABI uses an unusual reloc format. */
-typedef struct
-{
-	Elf32_Word    r_sym;	/* Symbol index */
-	unsigned char r_ssym;	/* Special symbol for 2nd relocation */
-	unsigned char r_type3;	/* 3rd relocation type */
-	unsigned char r_type2;	/* 2nd relocation type */
-	unsigned char r_type1;	/* 1st relocation type */
-} _Elf64_Mips_R_Info;
-
-typedef union
-{
-	Elf64_Xword		r_info_number;
-	_Elf64_Mips_R_Info	r_info_fields;
-} _Elf64_Mips_R_Info_union;
-
-#define ELF64_MIPS_R_SYM(i) \
-  ((__extension__ (_Elf64_Mips_R_Info_union)(i)).r_info_fields.r_sym)
-
-#define ELF64_MIPS_R_TYPE(i) \
-  ((__extension__ (_Elf64_Mips_R_Info_union)(i)).r_info_fields.r_type1)
 
 #if KERNEL_ELFDATA != HOST_ELFDATA
 
@@ -139,6 +115,7 @@ struct elf_info {
 	Elf_Shdr     *sechdrs;
 	Elf_Sym      *symtab_start;
 	Elf_Sym      *symtab_stop;
+	unsigned int export_symbol_secndx;	/* .export_symbol section */
 	char         *strtab;
 	char	     *modinfo;
 	unsigned int modinfo_len;
@@ -153,27 +130,28 @@ struct elf_info {
 	Elf32_Word   *symtab_shndx_stop;
 };
 
-static inline int is_shndx_special(unsigned int i)
-{
-	return i != SHN_XINDEX && i >= SHN_LORESERVE && i <= SHN_HIRESERVE;
-}
-
-/*
- * Move reserved section indices SHN_LORESERVE..SHN_HIRESERVE out of
- * the way to -256..-1, to avoid conflicting with real section
- * indices.
- */
-#define SPECIAL(i) ((i) - (SHN_HIRESERVE + 1))
-
 /* Accessor for sym->st_shndx, hides ugliness of "64k sections" */
 static inline unsigned int get_secindex(const struct elf_info *info,
 					const Elf_Sym *sym)
 {
-	if (is_shndx_special(sym->st_shndx))
-		return SPECIAL(sym->st_shndx);
-	if (sym->st_shndx != SHN_XINDEX)
-		return sym->st_shndx;
-	return info->symtab_shndx_start[sym - info->symtab_start];
+	unsigned int index = sym->st_shndx;
+
+	/*
+	 * Elf{32,64}_Sym::st_shndx is 2 byte. Big section numbers are available
+	 * in the .symtab_shndx section.
+	 */
+	if (index == SHN_XINDEX)
+		return info->symtab_shndx_start[sym - info->symtab_start];
+
+	/*
+	 * Move reserved section indices SHN_LORESERVE..SHN_HIRESERVE out of
+	 * the way to UINT_MAX-255..UINT_MAX, to avoid conflicting with real
+	 * section indices.
+	 */
+	if (index >= SHN_LORESERVE && index <= SHN_HIRESERVE)
+		return index - SHN_HIRESERVE - 1;
+
+	return index;
 }
 
 /* file2alias.c */
@@ -187,6 +165,7 @@ void get_src_version(const char *modname, char sum[], unsigned sumlen);
 /* from modpost.c */
 char *read_text_file(const char *filename);
 char *get_line(char **stringp);
+void *sym_get_data(const struct elf_info *info, const Elf_Sym *sym);
 
 enum loglevel {
 	LOG_WARN,
