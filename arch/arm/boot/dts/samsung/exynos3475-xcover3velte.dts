@@ -1,0 +1,100 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * Samsung's Galaxy Xcover 3 Value Edition Device Tree
+ *
+ * Copyright (c) 2024, Ivaylo Ivanov <ivo.ivanov.ivanov1@gmail.com>
+ */
+/dts-v1/;
+
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/input/input.h>
+#include "exynos3475.dtsi"
+
+/ {
+	model = "Samsung Galaxy Xcover 3 Value Edition";
+	compatible = "samsung,xcover3velte", "samsung,exynos3475";
+	chassis-type = "handset";
+
+	chosen {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+
+		framebuffer0: framebuffer@57e05000 {
+			status= "okay";
+			compatible = "simple-framebuffer";
+			reg = <0x0 0x57e05000 0x0 (480 * 800 * 4)>;
+			width = <480>;
+			height = <800>;
+			stride = <(480 * 4)>;
+			format = "a8r8g8b8";
+		};
+	};
+
+	gpio_keys {
+		compatible = "gpio-keys";
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		volume-down {
+			label = "Volume Down";
+			linux,code = <KEY_VOLUMEDOWN>;
+			gpios = <&gpa0 0 GPIO_ACTIVE_LOW>;
+		};
+
+		volume-up {
+			label = "Volume Up";
+			linux,code = <KEY_VOLUMEUP>;
+			gpios = <&gpa0 1 GPIO_ACTIVE_LOW>;
+		};
+
+		power {
+			label = "Power Button";
+			linux,code = <KEY_POWER>;
+			gpios = <&gpa1 4 GPIO_ACTIVE_LOW>;
+			wakeup-source;
+		};
+
+		home {
+			label = "Home Button";
+			linux,code = <KEY_HOMEPAGE>;
+			gpios = <&gpa0 7 GPIO_ACTIVE_LOW>;
+			wakeup-source;
+		};
+
+		multi {
+			label = "Multikey Button";
+			linux,code = <KEY_LAST>;
+			gpios = <&gpd1 1 GPIO_ACTIVE_LOW>;
+		};
+
+		menu {
+			label = "Menu Button";
+			linux,code = <KEY_MENU>;
+			gpios = <&gpd1 2 GPIO_ACTIVE_LOW>;
+		};
+
+		back {
+			label = "Back Button";
+			linux,code = <KEY_BACK>;
+			gpios = <&gpd0 6 GPIO_ACTIVE_LOW>;
+		};
+	};
+
+	memory {
+		device_type = "memory";
+		/* We expect the bootloader to fill in the reg */
+		reg = <0x0 0x20000000 0x0 0x0>;
+	};
+
+	reserved-memory {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+
+		continuous_splash: framebuffer@57e05000 {
+			reg = <0x0 0x57e05000 0x0 (480 * 800 * 4)>;
+			no-map;
+		};
+	};
+};

@@ -2,7 +2,8 @@
 dtb-$(CONFIG_ARCH_EXYNOS3) += \
 	exynos3250-artik5-eval.dtb \
 	exynos3250-monk.dtb \
-	exynos3250-rinato.dtb
+	exynos3250-rinato.dtb \
+	exynos3475-xcover3velte.dtb
 dtb-$(CONFIG_ARCH_EXYNOS4) += \
 	exynos4210-i9100.dtb \
 	exynos4210-origen.dtb \

@@ -53,6 +53,12 @@ properties:
           - const: samsung,exynos3250
           - const: samsung,exynos3
 
+      - description: Exynos3475 based boards
+        items:
+          - enum:
+              - samsung,xcover3velte            # Samsung Galaxy Xcover 3 Value Edition (G389F)
+          - const: samsung,exynos3475
+
       - description: Samsung ARTIK5 boards
         items:
           - enum:
