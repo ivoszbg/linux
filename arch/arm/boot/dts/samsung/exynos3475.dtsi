@@ -16,6 +16,7 @@
 	#size-cells = <2>;
 
 	aliases {
+		mshc0 = &mmc_0;
 		pinctrl0 = &pinctrl_alive;
 		pinctrl1 = &pinctrl_aud;
 		pinctrl2 = &pinctrl_ese;
@@ -214,6 +215,18 @@
 						 IRQ_TYPE_LEVEL_HIGH)>;
 		};
 
+		mmc_0: mshc@13540000 {
+			compatible = "samsung,exynos7-dw-mshc";
+			reg = <0x13540000 0x2000>;
+			interrupts = <GIC_SPI 245 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&cmu_fsys CLK_ACLK_FSYS_200_ACLK_MMC0_I_ACLK>,
+				 <&cmu_fsys CLK_SCLK_FSYS_MMC0_SDCLKIN_SCLK_MMC0_SDCLKIN>;
+			clock-names = "biu", "ciu";
+			fifo-depth = <0x40>;
+
+			status = "disabled";
+		};
+
 		pinctrl_alive: pinctrl@139b0000 {
 			compatible = "samsung,exynos3475-pinctrl";
 			reg = <0x139b0000 0x1000>;
@@ -270,4 +283,3 @@
 };
 
 #include "exynos3475-pinctrl.dtsi"
-
