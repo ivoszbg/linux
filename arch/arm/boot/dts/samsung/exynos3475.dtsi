@@ -45,17 +45,6 @@
 			clock-frequency = <26000000>;
 			clock-output-names = "oscclk";
 		};
-
-		/*
-		 * Keep the stub clock for mct driver, until proper clock
-		 * driver is implemented.
-		 */
-		mctclk: clock-mct {
-			compatible = "fixed-clock";
-			#clock-cells = <0>;
-			clock-frequency = <66625000>;
-			clock-output-names = "mct";
-		};
 	};
 
 	cpus {
@@ -208,7 +197,7 @@
 				     <GIC_SPI 111 IRQ_TYPE_LEVEL_HIGH>,
 				     <GIC_SPI 112 IRQ_TYPE_LEVEL_HIGH>,
 				     <GIC_SPI 113 IRQ_TYPE_LEVEL_HIGH>;
-			clocks = <&oscclk>, <&mctclk>;
+			clocks = <&oscclk>, <&cmu_peri CLK_ACLK_PERI_PCLK_MCT_PCLK>;
 			clock-names = "fin_pll", "mct";
 		};
 
@@ -281,3 +270,4 @@
 };
 
 #include "exynos3475-pinctrl.dtsi"
+
