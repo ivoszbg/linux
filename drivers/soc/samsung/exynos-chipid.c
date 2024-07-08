@@ -43,6 +43,7 @@ static const struct exynos_soc_id {
 	/* List ordered by SoC name */
 	/* Compatible with: samsung,exynos4210-chipid */
 	{ "EXYNOS3250", 0xE3472000 },
+	{ "EXYNOS3475", 0xE3475000 },
 	{ "EXYNOS4210", 0x43200000 },	/* EVT0 revision */
 	{ "EXYNOS4210", 0x43210000 },
 	{ "EXYNOS4212", 0x43220000 },
