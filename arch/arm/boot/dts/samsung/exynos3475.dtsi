@@ -1,0 +1,207 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * Samsung's Exynos 3475 SoC device tree source
+ *
+ * Copyright (c) 2024, Ivaylo Ivanov <ivo.ivanov.ivanov1@gmail.com>
+ */
+
+#include <dt-bindings/interrupt-controller/arm-gic.h>
+#include <dt-bindings/interrupt-controller/irq.h>
+
+/ {
+	interrupt-parent = <&gic>;
+
+	#address-cells = <2>;
+	#size-cells = <2>;
+
+	aliases {
+		pinctrl0 = &pinctrl_alive;
+		pinctrl1 = &pinctrl_aud;
+		pinctrl2 = &pinctrl_ese;
+		pinctrl3 = &pinctrl_fsys;
+		pinctrl4 = &pinctrl_mif;
+		pinctrl5 = &pinctrl_nfc;
+		pinctrl6 = &pinctrl_top;
+		pinctrl7 = &pinctrl_touch;
+	};
+
+	arm-pmu {
+		compatible = "arm,cortex-a7-pmu";
+		interrupts = <GIC_SPI 50 IRQ_TYPE_LEVEL_HIGH>,
+			     <GIC_SPI 51 IRQ_TYPE_LEVEL_HIGH>,
+			     <GIC_SPI 52 IRQ_TYPE_LEVEL_HIGH>,
+			     <GIC_SPI 53 IRQ_TYPE_LEVEL_HIGH>;
+		interrupt-affinity = <&cpu0>, <&cpu1>, <&cpu2>, <&cpu3>;
+	};
+
+	chosen { };
+
+	clocks {
+		/* Main system clock (XTCXO); external, must be 26 MHz */
+		oscclk: clock-oscclk {
+			compatible = "fixed-clock";
+			#clock-cells = <0>;
+			clock-frequency = <26000000>;
+			clock-output-names = "oscclk";
+		};
+
+		/*
+		 * Keep the stub clock for mct driver, until proper clock
+		 * driver is implemented.
+		 */
+		mctclk: clock-mct {
+			compatible = "fixed-clock";
+			#clock-cells = <0>;
+			clock-frequency = <66625000>;
+			clock-output-names = "mct";
+		};
+	};
+
+	cpus {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		cpu0: cpu@0 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a7";
+			reg = <0x0 0x0>;
+		};
+
+		cpu1: cpu@1 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a7";
+			reg = <0x0 0x1>;
+		};
+
+		cpu2: cpu@2 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a7";
+			reg = <0x0 0x2>;
+		};
+
+		cpu3: cpu@3 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a7";
+			reg = <0x0 0x3>;
+		};
+
+		cpu-map {
+			cluster0 {
+				core0 {
+					cpu = <&cpu0>;
+				};
+
+				core1 {
+					cpu = <&cpu1>;
+				};
+
+				core2 {
+					cpu = <&cpu2>;
+				};
+
+				core3 {
+					cpu = <&cpu3>;
+				};
+			};
+		};
+	};
+
+	soc: soc {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		ranges = <0 0 0 0xffffffff>;
+		compatible = "simple-bus";
+
+		chipid@10000000 {
+			compatible = "samsung,exynos4210-chipid";
+			reg = <0x10000000 0x100>;
+		};
+
+		timer@100b0000 {
+			compatible = "samsung,exynos4210-mct";
+			reg = <0x100b0000 0x800>;
+			interrupts = <GIC_SPI 102 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 103 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 104 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 105 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 106 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 107 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 108 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 109 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 110 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 111 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 112 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 113 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&oscclk>, <&mctclk>;
+			clock-names = "fin_pll", "mct";
+		};
+
+		gic: interrupt-controller@10c00000 {
+			compatible = "arm,cortex-a7-gic";
+			#interrupt-cells = <3>;
+			#address-cells = <0>;
+			interrupt-controller;
+			reg =	<0x10c01000 0x1000>,
+				<0x10c02000 0x1000>,
+				<0x10c04000 0x2000>,
+				<0x10c06000 0x2000>;
+			interrupts = <GIC_PPI 9 (GIC_CPU_MASK_SIMPLE(8) |
+						 IRQ_TYPE_LEVEL_HIGH)>;
+		};
+
+		pinctrl_alive: pinctrl@139b0000 {
+			compatible = "samsung,exynos3475-pinctrl";
+			reg = <0x139b0000 0x1000>;
+
+			wakeup-interrupt-controller {
+				compatible = "samsung,exynos4210-wakeup-eint";
+				interrupts = <GIC_SPI 16 IRQ_TYPE_LEVEL_HIGH>;
+				interrupt-parent = <&gic>;
+			};
+		};
+
+		pinctrl_aud: pinctrl@148f0000 {
+			compatible = "samsung,exynos3475-pinctrl";
+			reg = <0x148f0000 0x1000>;
+			interrupts = <GIC_SPI 68 IRQ_TYPE_LEVEL_HIGH>;
+		};
+
+		pinctrl_ese: pinctrl@138e0000 {
+			compatible = "samsung,exynos3475-pinctrl";
+			reg = <0x138e0000 0x1000>;
+			interrupts = <GIC_SPI 438 IRQ_TYPE_LEVEL_HIGH>;
+		};
+
+		pinctrl_fsys: pinctrl@13750000 {
+			compatible = "samsung,exynos3475-pinctrl";
+			reg = <0x13750000 0x1000>;
+			interrupts = <GIC_SPI 250 IRQ_TYPE_LEVEL_HIGH>;
+		};
+
+		pinctrl_mif: pinctrl@104e0000 {
+			compatible = "samsung,exynos3475-pinctrl";
+			reg = <0x104e0000 0x1000>;
+			interrupts = <GIC_SPI 385 IRQ_TYPE_LEVEL_HIGH>;
+		};
+
+		pinctrl_nfc: pinctrl@138c0000 {
+			compatible = "samsung,exynos3475-pinctrl";
+			reg = <0x138c0000 0x1000>;
+			interrupts = <GIC_SPI 115 IRQ_TYPE_LEVEL_HIGH>;
+		};
+
+		pinctrl_top: pinctrl@139c0000 {
+			compatible = "samsung,exynos3475-pinctrl";
+			reg = <0x139c0000 0x1000>;
+			interrupts = <GIC_SPI 440 IRQ_TYPE_LEVEL_HIGH>;
+		};
+
+		pinctrl_touch: pinctrl@138d0000 {
+			compatible = "samsung,exynos3475-pinctrl";
+			reg = <0x138d0000 0x1000>;
+			interrupts = <GIC_SPI 116 IRQ_TYPE_LEVEL_HIGH>;
+		};
+	};
+};
+
+#include "exynos3475-pinctrl.dtsi"
