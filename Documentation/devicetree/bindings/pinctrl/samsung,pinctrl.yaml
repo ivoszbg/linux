@@ -43,6 +43,7 @@ properties:
       - samsung,s3c64xx-pinctrl
       - samsung,s5pv210-pinctrl
       - samsung,exynos3250-pinctrl
+      - samsung,exynos3475-pinctrl
       - samsung,exynos4210-pinctrl
       - samsung,exynos4x12-pinctrl
       - samsung,exynos5250-pinctrl
