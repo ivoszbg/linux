@@ -6,6 +6,7 @@ config COMMON_CLK_SAMSUNG
 	select S3C64XX_COMMON_CLK if ARM && ARCH_S3C64XX
 	select S5PV210_COMMON_CLK if ARM && ARCH_S5PV210
 	select EXYNOS_3250_COMMON_CLK if ARM && SOC_EXYNOS3250
+	select EXYNOS_3475_COMMON_CLK if ARM && ARCH_EXYNOS3
 	select EXYNOS_4_COMMON_CLK if ARM && ARCH_EXYNOS4
 	select EXYNOS_5250_COMMON_CLK if ARM && SOC_EXYNOS5250
 	select EXYNOS_5260_COMMON_CLK if ARM && SOC_EXYNOS5260
@@ -34,6 +35,13 @@ config EXYNOS_3250_COMMON_CLK
 	help
 	  Support for the clock controller present on the Samsung
 	  Exynos3250 SoCs. Choose Y here only if you build for this SoC.
+
+config EXYNOS_3475_COMMON_CLK
+	bool "Samsung Exynos3475 clock controller support" if COMPILE_TEST
+	depends on COMMON_CLK_SAMSUNG
+	help
+	  Support for the clock controller present on the Samsung
+	  Exynos3475 SoCs. Choose Y here only if you build for this SoC.
 
 config EXYNOS_4_COMMON_CLK
 	bool "Samsung Exynos4 clock controller support" if COMPILE_TEST
