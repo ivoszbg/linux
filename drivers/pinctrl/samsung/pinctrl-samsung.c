@@ -1383,6 +1383,8 @@ static const struct of_device_id samsung_pinctrl_dt_match[] = {
 #ifdef CONFIG_PINCTRL_EXYNOS_ARM
 	{ .compatible = "samsung,exynos3250-pinctrl",
 		.data = &exynos3250_of_data },
+	{ .compatible = "samsung,exynos3475-pinctrl",
+		.data = &exynos3475_of_data },
 	{ .compatible = "samsung,exynos4210-pinctrl",
 		.data = &exynos4210_of_data },
 	{ .compatible = "samsung,exynos4x12-pinctrl",
