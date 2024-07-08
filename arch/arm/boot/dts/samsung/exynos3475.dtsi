@@ -2,11 +2,12 @@
 /*
  * Samsung's Exynos 3475 SoC device tree source
  *
- * Copyright (c) 2024, Ivaylo Ivanov <ivo.ivanov.ivanov1@gmail.com>
+ * Copyright (c) 2022, Ivaylo Ivanov <ivo.ivanov.ivanov1@gmail.com>
  */
 
 #include <dt-bindings/interrupt-controller/arm-gic.h>
 #include <dt-bindings/interrupt-controller/irq.h>
+#include <dt-bindings/clock/exynos3475.h>
 
 / {
 	interrupt-parent = <&gic>;
@@ -64,25 +65,25 @@
 		cpu0: cpu@0 {
 			device_type = "cpu";
 			compatible = "arm,cortex-a7";
-			reg = <0x0 0x0>;
+			reg = <0x0>;
 		};
-
+	
 		cpu1: cpu@1 {
 			device_type = "cpu";
 			compatible = "arm,cortex-a7";
-			reg = <0x0 0x1>;
+			reg = <0x1>;
 		};
 
 		cpu2: cpu@2 {
 			device_type = "cpu";
 			compatible = "arm,cortex-a7";
-			reg = <0x0 0x2>;
+			reg = <0x2>;
 		};
 
 		cpu3: cpu@3 {
 			device_type = "cpu";
 			compatible = "arm,cortex-a7";
-			reg = <0x0 0x3>;
+			reg = <0x3>;	
 		};
 
 		cpu-map {
@@ -115,6 +116,81 @@
 		chipid@10000000 {
 			compatible = "samsung,exynos4210-chipid";
 			reg = <0x10000000 0x100>;
+		};
+
+		cmu_top: clock-controller@10010000 {
+			compatible = "samsung,exynos3475-cmu-top";
+			reg = <0x10010000 0x10000>;
+			#clock-cells = <1>;
+
+			clock-names = "oscclk", "bus_pll";
+			clocks = <&oscclk>, <&cmu_mif CLK_BUS_PLL>;
+		};
+
+		cmu_mif: clock-controller@10430000 {
+			compatible = "samsung,exynos3475-cmu-mif";
+			reg = <0x10430000 0x10000>;
+			#clock-cells = <1>;
+
+			clock-names = "oscclk";
+			clocks = <&oscclk>;
+		};
+
+
+		cmu_cpu: clock-controller@10900000 {
+			compatible = "samsung,exynos3475-cmu-cpu";
+			reg = <0x10900000 0x10000>;
+			#clock-cells = <1>;
+
+			clock-names = "oscclk", "bus_pll";
+			clocks = <&oscclk>, <&cmu_mif CLK_BUS_PLL>;
+		};
+
+		cmu_g3d: clock-controller@11460000 {
+			compatible = "samsung,exynos3475-cmu-g3d";
+			reg = <0x11460000 0x10000>;
+			#clock-cells = <1>;
+
+			clock-names = "oscclk",
+				"aclk_g3d_400";
+			clocks = <&oscclk>,
+				<&cmu_top CLK_ACLK_G3D_400>;
+		};
+
+		cmu_bus0: clock-controller@11800000 {
+			compatible = "samsung,exynos3475-cmu-bus0";
+			reg = <0x11800000 0x10000>;
+			#clock-cells = <1>;
+
+			clock-names = "aclk_bus0_333";
+			clocks = <&cmu_top CLK_ACLK_BUS0_333>;
+		};
+
+		cmu_bus2: clock-controller@13000000 {
+			compatible = "samsung,exynos3475-cmu-bus2";
+			reg = <0x13000000 0x10000>;
+			#clock-cells = <1>;
+
+			clock-names = "aclk_bus2_333";
+			clocks = <&cmu_top CLK_ACLK_BUS2_333>;
+		};
+
+		cmu_fsys: clock-controller@13730000 {
+			compatible = "samsung,exynos3475-cmu-fsys";
+			reg = <0x13730000 0x10000>;
+			#clock-cells = <1>;
+
+			clock-names = "oscclk";
+			clocks = <&oscclk>;
+		};
+
+		cmu_peri: clock-controller@139f0000 {
+			compatible = "samsung,exynos3475-cmu-peri";
+			reg = <0x139f0000 0x10000>;
+			#clock-cells = <1>;
+
+			clock-names = "oscclk";
+			clocks = <&oscclk>;
 		};
 
 		timer@100b0000 {
