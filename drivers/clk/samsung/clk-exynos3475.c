@@ -541,10 +541,10 @@ CLK_OF_DECLARE(exynos3475_cmu_peri, "samsung,exynos3475-cmu-peri",
 #define CLK_CON_MUX_DIV2_MEDIA_PLL			0x214
 #define CLK_CON_MUX_CLKM_PHY_A				0x218
 #define CLK_CON_MUX_CLKM_PHY_B				0x21C
-#define CLK_CON_MUX_CLK2X_PHY_A			0x220
-#define CLK_CON_MUX_CLK2X_PHY_B			0x224
+#define CLK_CON_MUX_CLK2X_PHY_A				0x220
+#define CLK_CON_MUX_CLK2X_PHY_B				0x224
 #define CLK_CON_MUX_ACLK_MIF_333			0x228
-#define CLK_CON_MUX_ACLK_MIF_83			0x22C
+#define CLK_CON_MUX_ACLK_MIF_83				0x22C
 #define CLK_CON_MUX_ACLK_MIF_FIX_50			0x230
 #define CLK_CON_MUX_ACLK_DISPAUD_133			0x234
 #define CLK_CON_MUX_ACLK_ISP_300			0x238
@@ -555,7 +555,7 @@ CLK_OF_DECLARE(exynos3475_cmu_peri, "samsung,exynos3475-cmu-peri",
 #define CLK_CON_DIV_CLK2X_PHY				0x404
 #define CLK_CON_DIV_ACLK_MIF_333			0x408
 #define CLK_CON_DIV_ACLK_MIF_166			0x40C
-#define CLK_CON_DIV_ACLK_MIF_83			0x410
+#define CLK_CON_DIV_ACLK_MIF_83				0x410
 #define CLK_CON_DIV_ACLK_MIF_FIX_50			0x414
 #define CLK_CON_DIV_ACLK_DISPAUD_133			0x418
 #define CLK_CON_DIV_ACLK_ISP_300			0x41C
@@ -563,7 +563,9 @@ CLK_OF_DECLARE(exynos3475_cmu_peri, "samsung,exynos3475-cmu-peri",
 #define CLK_CON_DIV_SCLK_DISP_DECON_INT_VCLK		0x424
 #define CLK_CON_DIV_MIF_NODDR				0x428
 
-#define CLK_ENABLE_ACLK_CPU_800			0x83C
+#define CLK_ENABLE_ACLK_MIF_83_SECURE_MAILBOX_APBIF	0x820
+#define CLK_ENABLE_ACLK_MIF_FIX_50			0x824
+#define CLK_ENABLE_ACLK_CPU_800				0x83C
 #define CLK_ENABLE_SCLK_BUS_PLL_TOP			0x840
 #define CLK_ENABLE_SCLK_MEDIA_PLL_TOP			0x844
 
@@ -612,6 +614,8 @@ static const unsigned long mif_clk_regs[] __initconst = {
 	CLK_CON_DIV_SCLK_DISP_DECON_INT_ECLK,
 	CLK_CON_DIV_SCLK_DISP_DECON_INT_VCLK,
 	CLK_CON_DIV_MIF_NODDR,
+	CLK_ENABLE_ACLK_MIF_83_SECURE_MAILBOX_APBIF,
+	CLK_ENABLE_ACLK_MIF_FIX_50,
 	CLK_ENABLE_ACLK_CPU_800,
 	CLK_ENABLE_SCLK_MEDIA_PLL_TOP,
 	CLK_ENABLE_SCLK_BUS_PLL_TOP,
@@ -648,6 +652,10 @@ static const struct samsung_div_clock mif_div_clks[] __initconst = {
 };
 
 static const struct samsung_gate_clock mif_gate_clks[] __initconst = {
+	GATE(0, "aclk_mif_83_secure_mailbox_apbif_pclk_s_mailbox_apbif_pclk", "dout_aclk_mif_83", CLK_ENABLE_ACLK_MIF_83_SECURE_MAILBOX_APBIF, 0, 0, 0),
+	GATE(CLK_ACLK_MIF_FIX_50_PCLK_MASYNC_HSI2C_CP_PCLK, "aclk_mif_fix_50_pclk_masync_hsi2c_cp_pclk", "dout_aclk_mif_fix_50", CLK_ENABLE_ACLK_MIF_FIX_50, 2, 0, 0),
+	GATE(CLK_ACLK_MIF_FIX_50_PCLK_MASYNC_HSI2C_AP_PCLK, "aclk_mif_fix_50_pclk_masync_hsi2c_ap_pclk", "dout_aclk_mif_fix_50", CLK_ENABLE_ACLK_MIF_FIX_50, 1, 0, 0),
+	GATE(CLK_ACLK_MIF_FIX_50_PCLK_HSI2C_MIF_PCLK, "aclk_mif_fix_50_pclk_hsi2c_mif_pclk", "dout_aclk_mif_fix_50", CLK_ENABLE_ACLK_MIF_FIX_50, 0, 0, 0),
 	GATE(CLK_ACLK_CPU_800, "aclk_cpu_800", "bus_pll", CLK_ENABLE_ACLK_CPU_800, 0, CLK_IGNORE_UNUSED, 0),
 	GATE(CLK_SCLK_MEDIA_PLL_TOP, "sclk_media_pll_top", "ffac_media_pll_div2", CLK_ENABLE_SCLK_MEDIA_PLL_TOP, 0, CLK_IGNORE_UNUSED, 0),
 	GATE(CLK_SCLK_BUS_PLL_TOP, "sclk_bus_pll_top", "bus_pll", CLK_ENABLE_SCLK_BUS_PLL_TOP, 0, CLK_IGNORE_UNUSED, 0),
