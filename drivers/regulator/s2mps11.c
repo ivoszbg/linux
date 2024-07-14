@@ -20,6 +20,7 @@
 #include <linux/mfd/samsung/s2mps14.h>
 #include <linux/mfd/samsung/s2mps15.h>
 #include <linux/mfd/samsung/s2mpu02.h>
+#include <linux/mfd/samsung/s2mpu04.h>
 
 /* The highest number of possible regulators for supported devices. */
 #define S2MPS_REGULATOR_MAX		S2MPS13_REGULATOR_MAX
@@ -251,6 +252,9 @@ static int s2mps11_regulator_enable(struct regulator_dev *rdev)
 		if (test_bit(rdev_id, s2mps11->suspend_state))
 			val = S2MPU02_ENABLE_SUSPEND;
 		else
+			val = rdev->desc->enable_mask;
+		break;
+	case S2MPU04:
 			val = rdev->desc->enable_mask;
 		break;
 	default:
@@ -1117,6 +1121,94 @@ static const struct regulator_desc s2mpu02_regulators[] = {
 	regulator_desc_s2mpu02_buck7(7),
 };
 
+#define regulator_desc_s2mpu04_ldo_reg(num, min, step, reg) {	\
+	.name		= "LDO"#num,				\
+	.id		= S2MPU04_LDO##num,			\
+	.ops		= &s2mpu02_ldo_ops,			\
+	.type		= REGULATOR_VOLTAGE,			\
+	.owner		= THIS_MODULE,				\
+	.min_uV		= min,					\
+	.uV_step	= step,					\
+	.n_voltages	= S2MPU04_LDO_N_VOLTAGES,		\
+	.vsel_reg	= reg,					\
+	.vsel_mask	= S2MPU04_LDO_VSEL_MASK,		\
+	.enable_reg	= reg,					\
+	.enable_mask	= S2MPU04_ENABLE_MASK,			\
+	.enable_time	= S2MPU04_ENABLE_TIME_LDO		\
+}
+
+#define regulator_desc_s2mpu04_ldoreg1(num) {		\
+	.name		= "LDO"#num,			\
+	.id		= S2MPU04_LDO##num,		\
+	.ops		= &s2mpu02_ldo_ops,		\
+	.type		= REGULATOR_VOLTAGE,		\
+	.owner		= THIS_MODULE,			\
+	.min_uV		= S2MPU04_LDO_MIN1,		\
+	.uV_step	= S2MPU04_LDO_STEP1,		\
+	.n_voltages	= S2MPU04_LDO_N_VOLTAGES,	\
+	.vsel_reg	= S2MPU04_REG_L1CTRL1,		\
+	.vsel_mask	= S2MPU04_LDO_VSEL_MASK,	\
+	.enable_reg	= S2MPU04_REG_L1CTRL1,		\
+	.enable_mask	= S2MPU04_ENABLE_MASK,		\
+	.enable_time	= S2MPU04_ENABLE_TIME_LDO	\
+}
+
+#define regulator_desc_s2mpu04_ldo(num, min, step) \
+	regulator_desc_s2mpu04_ldo_reg(num, min, step, S2MPU04_REG_L##num##CTRL)
+
+#define regulator_desc_s2mpu04_ldo1(num) \
+	regulator_desc_s2mpu04_ldo(num, S2MPU04_LDO_MIN1, S2MPU04_LDO_STEP1)
+
+#define regulator_desc_s2mpu04_ldo2(num) \
+	regulator_desc_s2mpu04_ldo(num, S2MPU04_LDO_MIN1, S2MPU04_LDO_STEP2)
+
+#define regulator_desc_s2mpu04_ldo3(num) \
+	regulator_desc_s2mpu04_ldo(num, S2MPU04_LDO_MIN2, S2MPU04_LDO_STEP2)
+
+#define regulator_desc_s2mpu04_buck(num, which) {	\
+	.name		= "BUCK"#num,			\
+	.id		= S2MPU04_BUCK##num,		\
+	.ops		= &s2mpu02_buck_ops,		\
+	.type		= REGULATOR_VOLTAGE,		\
+	.owner		= THIS_MODULE,			\
+	.min_uV		= S2MPU04_BUCK_MIN##which,	\
+	.uV_step	= S2MPU04_BUCK_STEP##which,	\
+	.n_voltages	= S2MPU04_BUCK_N_VOLTAGES,	\
+	.vsel_reg	= S2MPU04_REG_B##num##CTRL2,	\
+	.vsel_mask	= S2MPU04_BUCK_VSEL_MASK,	\
+	.enable_reg	= S2MPU04_REG_B##num##CTRL1,	\
+	.enable_mask	= S2MPU04_ENABLE_MASK,		\
+	.enable_time	= S2MPU04_ENABLE_TIME_BUCK##num	\
+}
+
+#define regulator_desc_s2mpu04_buck1(num) regulator_desc_s2mpu04_buck(num, 1)
+#define regulator_desc_s2mpu04_buck23(num) regulator_desc_s2mpu04_buck(num, 2)
+
+static const struct regulator_desc s2mpu04_regulators[] = {
+	regulator_desc_s2mpu04_ldoreg1(1),
+	regulator_desc_s2mpu04_ldo2(2),
+	regulator_desc_s2mpu04_ldo1(3),
+	regulator_desc_s2mpu04_ldo3(4),
+	regulator_desc_s2mpu04_ldo3(5),
+	regulator_desc_s2mpu04_ldo2(6),
+
+#if 0
+	regulator_desc_s2mpu04_ldo3(16)
+#endif
+	regulator_desc_s2mpu04_ldo2(17),
+	regulator_desc_s2mpu04_ldo3(18),
+	regulator_desc_s2mpu04_ldo2(19),
+	regulator_desc_s2mpu04_ldo3(20),
+	regulator_desc_s2mpu04_ldo2(21),
+	regulator_desc_s2mpu04_ldo3(22),
+	regulator_desc_s2mpu04_ldo2(23),
+	regulator_desc_s2mpu04_ldo2(24),
+	regulator_desc_s2mpu04_ldo3(25),
+	regulator_desc_s2mpu04_buck1(1),
+	regulator_desc_s2mpu04_buck23(2),
+	regulator_desc_s2mpu04_buck23(3),
+};
+
 static int s2mps11_pmic_probe(struct platform_device *pdev)
 {
 	struct sec_pmic_dev *iodev = dev_get_drvdata(pdev->dev.parent);
@@ -1159,6 +1251,12 @@ static int s2mps11_pmic_probe(struct platform_device *pdev)
 		regulators = s2mpu02_regulators;
 		BUILD_BUG_ON(S2MPS_REGULATOR_MAX < ARRAY_SIZE(s2mpu02_regulators));
 		break;
+	case S2MPU04:
+		rdev_num = ARRAY_SIZE(s2mpu04_regulators);
+		regulators = s2mpu04_regulators;
+		BUILD_BUG_ON(S2MPS_REGULATOR_MAX < ARRAY_SIZE(s2mpu04_regulators));
+		break;
+
 	default:
 		dev_err(&pdev->dev, "Invalid device type: %u\n",
 				    s2mps11->dev_type);
@@ -1231,6 +1329,7 @@ static const struct platform_device_id s2mps11_pmic_id[] = {
 	{ "s2mps14-regulator", S2MPS14X},
 	{ "s2mps15-regulator", S2MPS15X},
 	{ "s2mpu02-regulator", S2MPU02},
+	{ "s2mpu04-regulator", S2MPU04},
 	{ },
 };
 MODULE_DEVICE_TABLE(platform, s2mps11_pmic_id);
@@ -1248,5 +1347,5 @@ module_platform_driver(s2mps11_pmic_driver);
 
 /* Module information */
 MODULE_AUTHOR("Sangbeom Kim <sbkim73@samsung.com>");
-MODULE_DESCRIPTION("Samsung S2MPS11/S2MPS14/S2MPS15/S2MPU02 Regulator Driver");
+MODULE_DESCRIPTION("Samsung S2MPS11/S2MPS14/S2MPS15/S2MPU02/S2MPU04 Regulator Driver");
 MODULE_LICENSE("GPL");
