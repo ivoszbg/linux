@@ -27,6 +27,9 @@
 #define EXYNOS_WKUP_ECON_OFFSET		0xE00
 #define EXYNOS_WKUP_EMASK_OFFSET	0xF00
 #define EXYNOS_WKUP_EPEND_OFFSET	0xF40
+#define EXYNOS3475_WKUP_ECON_OFFSET	0x700
+#define EXYNOS3475_WKUP_EMASK_OFFSET	0x900
+#define EXYNOS3475_WKUP_EPEND_OFFSET	0xA00
 #define EXYNOS7_WKUP_ECON_OFFSET	0x700
 #define EXYNOS7_WKUP_EMASK_OFFSET	0x900
 #define EXYNOS7_WKUP_EPEND_OFFSET	0xA00
@@ -191,6 +194,8 @@ int exynos_eint_gpio_init(struct samsung_pinctrl_drv_data *d);
 int exynos_eint_wkup_init(struct samsung_pinctrl_drv_data *d);
 void exynos_pinctrl_suspend(struct samsung_pinctrl_drv_data *drvdata);
 void exynos_pinctrl_resume(struct samsung_pinctrl_drv_data *drvdata);
+void exynos5430_pinctrl_suspend(struct samsung_pinctrl_drv_data *drvdata);
+void exynos5430_pinctrl_resume(struct samsung_pinctrl_drv_data *drvdata);
 struct samsung_retention_ctrl *
 exynos_retention_init(struct samsung_pinctrl_drv_data *drvdata,
 		      const struct samsung_retention_data *data);

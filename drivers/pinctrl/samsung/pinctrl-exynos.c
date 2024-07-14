@@ -537,6 +537,25 @@ static const struct exynos_irq_chip exynos4210_wkup_irq_chip __initconst = {
 	.set_eint_wakeup_mask = exynos_pinctrl_set_eint_wakeup_mask,
 };
 
+static const struct exynos_irq_chip exynos3475_wkup_irq_chip __initconst = {
+	.chip = {
+		.name = "exynos3475_wkup_irq_chip",
+		.irq_unmask = exynos_irq_unmask,
+		.irq_mask = exynos_irq_mask,
+		.irq_ack = exynos_irq_ack,
+		.irq_set_type = exynos_irq_set_type,
+		.irq_set_wake = exynos_wkup_irq_set_wake,
+		.irq_request_resources = exynos_irq_request_resources,
+		.irq_release_resources = exynos_irq_release_resources,
+	},
+	.eint_con = EXYNOS7_WKUP_ECON_OFFSET,
+	.eint_mask = EXYNOS7_WKUP_EMASK_OFFSET,
+	.eint_pend = EXYNOS7_WKUP_EPEND_OFFSET,
+	.eint_wake_mask_value = &eint_wake_mask_value,
+	.eint_wake_mask_reg = EXYNOS3475_EINT_WAKEUP_MASK,
+	.set_eint_wakeup_mask = exynos_pinctrl_set_eint_wakeup_mask,
+};
+
 static const struct exynos_irq_chip exynos7_wkup_irq_chip __initconst = {
 	.chip = {
 		.name = "exynos7_wkup_irq_chip",
@@ -576,6 +595,8 @@ static const struct exynos_irq_chip exynosautov920_wkup_irq_chip __initconst = {
 static const struct of_device_id exynos_wkup_irq_ids[] = {
 	{ .compatible = "samsung,s5pv210-wakeup-eint",
 			.data = &s5pv210_wkup_irq_chip },
+	{ .compatible = "samsung,exynos3475-wakeup-eint",
+			.data = &exynos3475_wkup_irq_chip },
 	{ .compatible = "samsung,exynos4210-wakeup-eint",
 			.data = &exynos4210_wkup_irq_chip },
 	{ .compatible = "samsung,exynos7-wakeup-eint",
@@ -655,6 +676,53 @@ static void exynos_irq_demux_eint16_31(struct irq_desc *desc)
 	chained_irq_exit(chip, desc);
 }
 
+
+static void exynos_eint_get_fltcon(struct samsung_pinctrl_drv_data *d,
+				   struct samsung_pin_bank *bank,
+				   unsigned int *fltcon0, unsigned int *fltcon1)
+{
+		*fltcon0 = EXYNOS_GPIO_EFLTCON_OFFSET + 2 * bank->eint_offset;
+		*fltcon1 = *fltcon0 + 0x4;
+}
+
+#define EXYNOS_EINT_FLTCON_EN	(1 << 7)
+#define EXYNOS_EINT_FLTCON_SEL	(1 << 6)
+#define EXYNOS_EINT_FLTCON_WIDTH(x)	((x) & 0x3f)
+#define EXYNOS_EINT_FLTCON_MASK		0xFF
+#define EXYNOS_EINT_FLTCON_LEN		8
+static void exynos_eint_flt_config(int en, int sel, int width,
+				   struct samsung_pinctrl_drv_data *d,
+				   struct samsung_pin_bank *bank)
+{
+	unsigned int fltcon0_reg = 0;
+	unsigned int fltcon1_reg = 0;
+	unsigned int flt_con;
+	unsigned int val, shift;
+	int i;
+	void __iomem *reg_base = d->virt_base;
+
+	flt_con = 0;
+
+	if (en)
+		flt_con |= EXYNOS_EINT_FLTCON_EN;
+
+	if (sel)
+		flt_con |= EXYNOS_EINT_FLTCON_SEL;
+
+	flt_con |= EXYNOS_EINT_FLTCON_WIDTH(width);
+
+	exynos_eint_get_fltcon(d, bank, &fltcon0_reg, &fltcon1_reg);
+	for (i = 0; i < EXYNOS_EINT_FLTCON_LEN >> 1; i++) {
+		shift = i * EXYNOS_EINT_FLTCON_LEN;
+		val = readl(reg_base + fltcon0_reg);
+		val &= ~(EXYNOS_EINT_FLTCON_MASK << shift);
+		val |= (flt_con << shift);
+		writel(val, reg_base + fltcon0_reg);
+		if (bank->nr_pins > 4)
+			writel(val, reg_base + fltcon1_reg);
+	}
+};
+
 /*
  * exynos_eint_wkup_init() - setup handling of external wakeup interrupts.
  * @d: driver data of samsung pinctrl driver.
@@ -669,7 +737,7 @@ __init int exynos_eint_wkup_init(struct samsung_pinctrl_drv_data *d)
 	struct exynos_muxed_weint_data *muxed_data;
 	const struct exynos_irq_chip *irq_chip;
 	unsigned int muxed_banks = 0;
-	unsigned int i;
+	unsigned int i, flt_con;
 	int idx, irq;
 
 	for_each_child_of_node(dev->of_node, np) {
@@ -684,6 +752,11 @@ __init int exynos_eint_wkup_init(struct samsung_pinctrl_drv_data *d)
 	}
 	if (!wkup_np)
 		return -ENODEV;
+
+	if (of_property_read_bool(wkup_np, "samsung,eint-flt-conf")) {
+		pr_info("%s: Need to configure eint filter\n", __func__);
+		d->eint_flt_config = true;
+	}
 
 	bank = d->pin_banks;
 	for (i = 0; i < d->nr_banks; ++i, ++bank) {
@@ -765,6 +838,21 @@ __init int exynos_eint_wkup_init(struct samsung_pinctrl_drv_data *d)
 		muxed_data->banks[idx++] = bank;
 	}
 
+	bank = d->pin_banks;
+
+	/*
+	 * In case of exynos3475 Alive block,
+	 * 0 means that the filter of alive block is enabled and
+	 * 1 means that the filter of alive block is disabled.
+	 */
+	if (d->eint_flt_config)
+		flt_con = 0;
+	else
+		flt_con = EXYNOS_EINT_FLTCON_EN;
+
+	for (i = 0; i < d->nr_banks; ++i, ++bank)
+		exynos_eint_flt_config(flt_con, EXYNOS_EINT_FLTCON_SEL, 0, d, bank);
+
 	return 0;
 }
 
@@ -842,6 +930,31 @@ void exynos_pinctrl_suspend(struct samsung_pinctrl_drv_data *drvdata)
 	}
 }
 
+void exynos5430_pinctrl_suspend(struct samsung_pinctrl_drv_data *drvdata)
+{
+	struct samsung_pin_bank *bank = drvdata->pin_banks;
+	struct samsung_pinctrl_drv_data *d = bank->drvdata;
+
+	int i;
+	for (i = 0; i < drvdata->nr_banks; ++i, ++bank) {
+		if (bank->eint_type == EINT_TYPE_GPIO
+			|| bank->eint_type == EINT_TYPE_WKUP
+			|| bank->eint_type == EINT_TYPE_WKUP_MUX) {
+			exynos_pinctrl_suspend_bank(drvdata, bank);
+			/*
+			 * In case of exynos3475, eint_flt_config is used to
+			 * control the inverted value unlike others.
+			 */
+			if (d->eint_flt_config)
+				exynos_eint_flt_config(EXYNOS_EINT_FLTCON_EN, 0,
+					       0, drvdata, bank);
+			else
+				exynos_eint_flt_config(0, 0,
+					       0, drvdata, bank);
+		}
+	}
+}
+
 static void exynos_pinctrl_resume_bank(
 				struct samsung_pinctrl_drv_data *drvdata,
 				struct samsung_pin_bank *bank)
@@ -915,6 +1028,15 @@ void exynos_pinctrl_resume(struct samsung_pinctrl_drv_data *drvdata)
 			else
 				exynos_pinctrl_resume_bank(drvdata, bank);
 		}
+}
+
+void exynos5430_pinctrl_resume(struct samsung_pinctrl_drv_data *drvdata)
+{
+	struct samsung_pin_bank *bank = drvdata->pin_banks;
+	int i;
+
+	for (i = 0; i < drvdata->nr_banks; ++i, ++bank)
+		exynos_pinctrl_resume_bank(drvdata, bank);
 }
 
 static void exynos_retention_enable(struct samsung_pinctrl_drv_data *drvdata)

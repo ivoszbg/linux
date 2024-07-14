@@ -282,6 +282,7 @@ struct samsung_pin_ctrl {
  * @nr_groups: number of such pin groups.
  * @pmx_functions: list of pin functions available to the driver.
  * @nr_function: number of such pin functions.
+ * @eint_flt_config: flags to configure external interrupt filter.
  * @nr_pins: number of pins supported by the controller.
  * @retention_ctrl: retention control runtime data.
  * @suspend: platform specific suspend callback, executed during pin controller
@@ -303,6 +304,7 @@ struct samsung_pinctrl_drv_data {
 	unsigned int			nr_groups;
 	const struct samsung_pmx_func	*pmx_functions;
 	unsigned int			nr_functions;
+	bool				eint_flt_config;
 
 	struct samsung_pin_bank		*pin_banks;
 	unsigned int			nr_banks;
