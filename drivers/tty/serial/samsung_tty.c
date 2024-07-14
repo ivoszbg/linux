@@ -2481,6 +2481,11 @@ static const struct s3c24xx_serial_drv_data s5pv210_serial_drv_data = {
 		.has_fracval	= 1,				\
 	}							\
 
+static const struct s3c24xx_serial_drv_data exynos3475_serial_drv_data = {
+	EXYNOS_COMMON_SERIAL_DRV_DATA,
+	.fifosize = { 64, 256, 256 },
+};
+
 static const struct s3c24xx_serial_drv_data exynos4210_serial_drv_data = {
 	EXYNOS_COMMON_SERIAL_DRV_DATA,
 	.fifosize = { 256, 64, 16, 16 },
@@ -2523,12 +2528,14 @@ static const struct s3c24xx_serial_drv_data gs101_serial_drv_data = {
 	.fifosize = { 0 },
 };
 
+#define EXYNOS3475_SERIAL_DRV_DATA (&exynos3475_serial_drv_data)
 #define EXYNOS4210_SERIAL_DRV_DATA (&exynos4210_serial_drv_data)
 #define EXYNOS5433_SERIAL_DRV_DATA (&exynos5433_serial_drv_data)
 #define EXYNOS850_SERIAL_DRV_DATA (&exynos850_serial_drv_data)
 #define GS101_SERIAL_DRV_DATA (&gs101_serial_drv_data)
 
 #else
+#define EXYNOS3475_SERIAL_DRV_DATA NULL
 #define EXYNOS4210_SERIAL_DRV_DATA NULL
 #define EXYNOS5433_SERIAL_DRV_DATA NULL
 #define EXYNOS850_SERIAL_DRV_DATA NULL
@@ -2604,6 +2611,9 @@ static const struct platform_device_id s3c24xx_serial_driver_ids[] = {
 		.name		= "s5pv210-uart",
 		.driver_data	= (kernel_ulong_t)S5PV210_SERIAL_DRV_DATA,
 	}, {
+		.name		= "exynos3475-uart",
+		.driver_data	= (kernel_ulong_t)EXYNOS3475_SERIAL_DRV_DATA,
+	}, {
 		.name		= "exynos4210-uart",
 		.driver_data	= (kernel_ulong_t)EXYNOS4210_SERIAL_DRV_DATA,
 	}, {
@@ -2632,6 +2642,8 @@ static const struct of_device_id s3c24xx_uart_dt_match[] = {
 		.data = S3C6400_SERIAL_DRV_DATA },
 	{ .compatible = "samsung,s5pv210-uart",
 		.data = S5PV210_SERIAL_DRV_DATA },
+	{ .compatible = "samsung,exynos3475-uart",
+		.data = EXYNOS3475_SERIAL_DRV_DATA },
 	{ .compatible = "samsung,exynos4210-uart",
 		.data = EXYNOS4210_SERIAL_DRV_DATA },
 	{ .compatible = "samsung,exynos5433-uart",
