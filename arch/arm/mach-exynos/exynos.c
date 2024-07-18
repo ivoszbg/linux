@@ -139,6 +139,7 @@ void exynos_set_delayed_reset_assertion(bool enable)
  * feat, the matches below should be moved to suspend.c.
  */
 static const struct of_device_id exynos_dt_pmu_match[] = {
+	{ .compatible = "samsung,exynos3475-pmu" },
 	{ .compatible = "samsung,exynos5260-pmu" },
 	{ .compatible = "samsung,exynos5410-pmu" },
 	{ /*sentinel*/ },
@@ -193,6 +194,7 @@ static void __init exynos_dt_machine_init(void)
 static char const *const exynos_dt_compat[] __initconst = {
 	"samsung,exynos3",
 	"samsung,exynos3250",
+	"samsung,exynos3475",
 	"samsung,exynos4",
 	"samsung,exynos4210",
 	"samsung,exynos4212",

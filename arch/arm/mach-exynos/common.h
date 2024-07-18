@@ -12,6 +12,8 @@
 #include <linux/platform_data/cpuidle-exynos.h>
 
 #define EXYNOS3250_SOC_ID	0xE3472000
+#define EXYNOS3475_SOC_ID	0xE3475000
+
 #define EXYNOS3_SOC_MASK	0xFFFFF000
 
 #define EXYNOS4210_CPU_ID	0x43210000
@@ -34,6 +36,7 @@ static inline int is_samsung_##name(void)	\
 }
 
 IS_SAMSUNG_CPU(exynos3250, EXYNOS3250_SOC_ID, EXYNOS3_SOC_MASK)
+IS_SAMSUNG_CPU(exynos3475, EXYNOS3475_SOC_ID, EXYNOS3_SOC_MASK)
 IS_SAMSUNG_CPU(exynos4210, EXYNOS4210_CPU_ID, EXYNOS4_CPU_MASK)
 IS_SAMSUNG_CPU(exynos4212, EXYNOS4212_CPU_ID, EXYNOS4_CPU_MASK)
 IS_SAMSUNG_CPU(exynos4412, EXYNOS4412_CPU_ID, EXYNOS4_CPU_MASK)
@@ -46,6 +49,12 @@ IS_SAMSUNG_CPU(exynos5800, EXYNOS5800_SOC_ID, EXYNOS5_SOC_MASK)
 # define soc_is_exynos3250()	is_samsung_exynos3250()
 #else
 # define soc_is_exynos3250()	0
+#endif
+
+#if defined(CONFIG_SOC_EXYNOS3475)
+# define soc_is_exynos3475()	is_samsung_exynos3475()
+#else
+# define soc_is_exynos3475()	0
 #endif
 
 #if defined(CONFIG_CPU_EXYNOS4210)

@@ -73,6 +73,11 @@ config SOC_EXYNOS3250
 	default y
 	depends on ARCH_EXYNOS3
 
+config SOC_EXYNOS3475
+	bool "Samsung Exynos3475"
+	default y
+	depends on ARCH_EXYNOS3
+
 config CPU_EXYNOS4210
 	bool "Samsung Exynos4210"
 	default y

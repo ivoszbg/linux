@@ -118,8 +118,18 @@ void exynos_cpu_power_up(int cpu)
 	if (soc_is_exynos3250())
 		core_conf |= S5P_CORE_AUTOWAKEUP_EN;
 
+	if (soc_is_exynos3475())
+		core_conf |= EXYNOS3475_INIT_WAKEUP_FROM_LOWPWR;
+
 	pmu_raw_writel(core_conf,
 			EXYNOS_ARM_CORE_CONFIGURATION(cpu));
+
+	if (soc_is_exynos3475()) {
+		core_conf = pmu_raw_readl(EXYNOS_ARM_CORE_OPTION(cpu));
+		core_conf |= EXYNOS3475_AUTOWAKEUP_EN;
+		pmu_raw_writel(core_conf,
+			EXYNOS_ARM_CORE_CONFIGURATION(cpu));
+	}
 }
 
 /**
