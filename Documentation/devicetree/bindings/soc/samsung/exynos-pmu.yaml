@@ -17,6 +17,7 @@ select:
         enum:
           - google,gs101-pmu
           - samsung,exynos3250-pmu
+          - samsung,exynos3475-pmu
           - samsung,exynos4210-pmu
           - samsung,exynos4212-pmu
           - samsung,exynos4412-pmu
@@ -52,6 +53,7 @@ properties:
           - const: syscon
       - items:
           - enum:
+              - samsung,exynos3475-pmu
               - samsung,exynos7885-pmu
               - samsung,exynosautov9-pmu
               - samsung,exynosautov920-pmu
