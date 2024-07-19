@@ -184,6 +184,134 @@ static void __init exynos3475_cmu_cpu_init(struct device_node *np)
 CLK_OF_DECLARE(exynos3475_cmu_cpu, "samsung,exynos3475-cmu-cpu",
 		exynos3475_cmu_cpu_init);
 
+/* Register Offset definitions for CMU_DISPAUD (0x14870000) */
+
+#define CLK_CON_MUX_ACLK_DISPAUD_133_USER		0x200
+#define CLK_CON_MUX_SCLK_DECON_INT_VCLK_USER		0x204
+#define CLK_CON_MUX_SCLK_DECON_INT_ECLK_USER		0x208
+#define CLK_CON_MUX_PHYCLK_MIPI_PHY_M_TXBYTECLKHS_M4S4_USER	0x20C
+#define CLK_CON_MUX_PHYCLK_MIPI_PHY_M_RXCLKESC0_M4S4_USER	0x210
+#define CLK_CON_MUX_SCLK_MI2S_AUD_USER			0x214
+
+#define CLK_CON_MUX_SCLK_DECON_INT_ECLK			0x218
+#define CLK_CON_MUX_SCLK_MI2S_AUD			0x21C
+#define CLK_CON_DIV_SCLK_DECON_INT_VCLK			0x404
+#define CLK_CON_DIV_SCLK_DECON_INT_ECLK			0x408
+#define CLK_CON_DIV_SCLK_MI2S_AUD			0x40C
+#define CLK_CON_DIV_SCLK_MIXER_AUD			0x410
+
+#define CLK_ENABLE_ACLK_DISPAUD_133			0x800
+#define CLK_ENABLE_ACLK_DISPAUD_133_SECURE_CFW		0x804
+#define CLK_ENABLE_SCLK_DECON_INT_VCLK			0x808
+#define CLK_ENABLE_SCLK_DECON_INT_ECLK			0x80C
+#define CLK_ENABLE_PHYCLK_MIPI_PHY_M_TXBYTECLKHS_M4S4	0x810
+#define CLK_ENABLE_PHYCLK_MIPI_PHY_M_RXCLKESC0_M4S4	0x814
+#define CLK_ENABLE_SCLK_MI2S_AUD			0x81C
+#define CLK_ENABLE_SCLK_MIXER_AUD			0x820
+#define CLK_ENABLE_IOCLK_AUD_I2S_SCLK_AP_IN		0x824
+#define CLK_ENABLE_IOCLK_AUD_I2S_BCLK_BT_IN		0x828
+#define CLK_ENABLE_IOCLK_AUD_I2S_BCLK_CP_IN		0x82C
+#define CLK_ENABLE_IOCLK_AUD_I2S_BCLK_FM_IN		0x830
+
+PNAME(mout_sclk_decon_int_eclk_p) = {"mout_sclk_decon_int_vclk_user", "mout_sclk_decon_int_eclk_user"};
+PNAME(mout_sclk_mi2s_aud_p) = {"mout_sclk_mi2s_aud_user", "ioclk_audi2s0cdclk"};
+
+static const struct samsung_fixed_rate_clock dispaud_fixed_rate_clks[] __initconst = {
+	FRATE(0, "phyclk_mipi_phy_m_txbyteclkhs_m4s4", NULL, 0, 188000000),
+	FRATE(0, "phyclk_mipi_phy_m_rxclkesc0_m4s4", NULL, 0, 20000000),
+	FRATE(0, "phyclk_csi_phy0_rxbyteclkhs", NULL, 0, 165000000),
+	FRATE(0, "ioclk_audi2s0cdclk", NULL, 0, 104000000),
+	FRATE(0, "ioclk_aud_i2s_sclk_ap_in", NULL, 0, 12500000),
+	FRATE(0, "ioclk_aud_i2s_bclk_bt_in", NULL, 0, 12500000),
+	FRATE(0, "ioclk_aud_i2s_bclk_cp_in", NULL, 0, 12500000),
+	FRATE(0, "ioclk_aud_i2s_bclk_fm_in", NULL, 0, 12500000),
+};
+
+static const unsigned long dispaud_clk_regs[] __initconst = {
+	CLK_CON_MUX_ACLK_DISPAUD_133_USER,
+	CLK_CON_MUX_SCLK_DECON_INT_VCLK_USER,
+	CLK_CON_MUX_SCLK_DECON_INT_ECLK_USER,
+	CLK_CON_MUX_PHYCLK_MIPI_PHY_M_TXBYTECLKHS_M4S4_USER,
+	CLK_CON_MUX_PHYCLK_MIPI_PHY_M_RXCLKESC0_M4S4_USER,
+	CLK_CON_MUX_SCLK_MI2S_AUD_USER,
+	CLK_CON_MUX_SCLK_DECON_INT_ECLK,
+	CLK_CON_MUX_SCLK_MI2S_AUD,
+	CLK_CON_DIV_SCLK_DECON_INT_VCLK,
+	CLK_CON_DIV_SCLK_DECON_INT_ECLK,
+	CLK_CON_DIV_SCLK_MI2S_AUD,
+	CLK_CON_DIV_SCLK_MIXER_AUD,
+	CLK_ENABLE_ACLK_DISPAUD_133,
+	CLK_ENABLE_ACLK_DISPAUD_133_SECURE_CFW,
+	CLK_ENABLE_SCLK_DECON_INT_VCLK,
+	CLK_ENABLE_SCLK_DECON_INT_ECLK,
+	CLK_ENABLE_PHYCLK_MIPI_PHY_M_TXBYTECLKHS_M4S4,
+	CLK_ENABLE_PHYCLK_MIPI_PHY_M_RXCLKESC0_M4S4,
+	CLK_ENABLE_SCLK_MI2S_AUD,
+	CLK_ENABLE_SCLK_MIXER_AUD,
+	CLK_ENABLE_IOCLK_AUD_I2S_SCLK_AP_IN,
+	CLK_ENABLE_IOCLK_AUD_I2S_BCLK_BT_IN,
+	CLK_ENABLE_IOCLK_AUD_I2S_BCLK_CP_IN,
+	CLK_ENABLE_IOCLK_AUD_I2S_BCLK_FM_IN,
+};
+
+static const struct samsung_mux_clock dispaud_mux_clks[] __initconst = {
+	MUX(0, "mout_sclk_decon_int_eclk", mout_sclk_decon_int_eclk_p, CLK_CON_MUX_SCLK_DECON_INT_ECLK, 12, 1),
+	MUX(CLK_MOUT_SCLK_MI2S_AUD, "mout_sclk_mi2s_aud", mout_sclk_mi2s_aud_p, CLK_CON_MUX_SCLK_MI2S_AUD, 12, 1),
+};
+
+static const struct samsung_div_clock dispaud_div_clks[] __initconst = {
+	DIV(CLK_DOUT_SCLK_DECON_INT_VCLK, "dout_sclk_decon_int_vclk", "mout_sclk_decon_int_vclk_user", CLK_CON_DIV_SCLK_DECON_INT_VCLK, 0, 3),
+	DIV(CLK_DOUT_SCLK_DECON_INT_ECLK, "dout_sclk_decon_int_eclk", "mout_sclk_decon_int_eclk", CLK_CON_DIV_SCLK_DECON_INT_ECLK, 0, 3),
+	DIV(CLK_DOUT_SCLK_MI2S_AUD, "dout_sclk_mi2s_aud", "mout_sclk_mi2s_aud", CLK_CON_DIV_SCLK_MI2S_AUD, 0, 4),
+	DIV(CLK_DOUT_SCLK_MIXER_AUD, "dout_sclk_mixer_aud", "mout_sclk_mi2s_aud_user", CLK_CON_DIV_SCLK_MIXER_AUD, 0, 4),
+};
+
+static const struct samsung_gate_clock dispaud_gate_clks[] __initconst = {
+	GATE(CLK_MOUT_ACLK_DISPAUD_133_USER, "mout_aclk_dispaud_133_user", "aclk_dispaud_133", CLK_CON_MUX_ACLK_DISPAUD_133_USER, 26, 0, 0), /* gated usermux clocks */
+	GATE(CLK_MOUT_SCLK_DECON_INT_VCLK_USER, "mout_sclk_decon_int_vclk_user", "sclk_decon_int_vclk_i", CLK_CON_MUX_SCLK_DECON_INT_VCLK_USER, 26, 0, 0),
+	GATE(CLK_MOUT_SCLK_DECON_INT_ECLK_USER, "mout_sclk_decon_int_eclk_user", "sclk_decon_int_eclk_i", CLK_CON_MUX_SCLK_DECON_INT_ECLK_USER, 26, 0, 0),
+	GATE(0, "mout_phyclk_mipi_phy_m_txbyteclkhs_m4s4_user", "phyclk_mipi_phy_m_txbyteclkhs_m4s4", CLK_CON_MUX_PHYCLK_MIPI_PHY_M_TXBYTECLKHS_M4S4_USER, 0, 0, 0),
+	GATE(0, "mout_phyclk_mipi_phy_m_rxclkesc0_m4s4_user", "phyclk_mipi_phy_m_rxclkesc0_m4s4", CLK_CON_MUX_PHYCLK_MIPI_PHY_M_RXCLKESC0_M4S4_USER, 0, 0, 0),
+	GATE(CLK_MOUT_SCLK_MI2S_AUD_USER, "mout_sclk_mi2s_aud_user", "sclk_aud_300", CLK_CON_MUX_SCLK_MI2S_AUD_USER, 26, 0, 0),
+	GATE(CLK_ACLK_DISPAUD_133_PCLK_DISPAUD_P, "aclk_dispaud_133_pclk_dispaud_p", "mout_aclk_dispaud_133_user", CLK_ENABLE_ACLK_DISPAUD_133, 4, 0, 0),
+	GATE(CLK_ACLK_DISPAUD_133_ACLK_AUD, "aclk_dispaud_133_aclk_aud", "mout_aclk_dispaud_133_user", CLK_ENABLE_ACLK_DISPAUD_133, 3, 0, 0),
+	GATE(CLK_ACLK_DISPAUD_133_ACLK_DISP, "aclk_dispaud_133_aclk_disp", "mout_aclk_dispaud_133_user", CLK_ENABLE_ACLK_DISPAUD_133, 2, 0, 0),
+	GATE(CLK_ACLK_DISPAUD_133_ACLK_DISPAUD_D, "aclk_dispaud_133_aclk_dispaud_d", "mout_aclk_dispaud_133_user", CLK_ENABLE_ACLK_DISPAUD_133, 1, 0, 0),
+	GATE(0, "aclk_dispaud_133_aclk_ppmu", "mout_aclk_dispaud_133_user", CLK_ENABLE_ACLK_DISPAUD_133, 0, 0, 0),
+	GATE(0, "aclk_dispaud_133_secure_cfw_aclk_cfw", "mout_aclk_dispaud_133_user", CLK_ENABLE_ACLK_DISPAUD_133_SECURE_CFW, 0, 0, 0),
+	GATE(CLK_SCLK_DISP_DECON_INT_VCLK, "sclk_disp_decon_int_vclk", "dout_sclk_decon_int_vclk", CLK_ENABLE_SCLK_DECON_INT_VCLK, 0, 0, 0),
+	GATE(CLK_SCLK_DISP_DECON_INT_ECLK, "sclk_disp_decon_int_eclk", "dout_sclk_decon_int_eclk", CLK_ENABLE_SCLK_DECON_INT_ECLK, 0, 0, 0),
+	GATE(CLK_PHYCLK_MIPI_PHY_M_TXBYTECLKHS_M4S4_PHYCLK_DSI_LINK0_BITCLKDIV8, "phyclk_mipi_phy_m_txbyteclkhs_m4s4_phyclk_dsi_link0_bitclkdiv8", "mout_phyclk_mipi_phy_m_txbyteclkhs_m4s4_user", CLK_ENABLE_PHYCLK_MIPI_PHY_M_TXBYTECLKHS_M4S4, 0, 0, 0),
+	GATE(CLK_PHYCLK_MIPI_PHY_M_RXCLKESC0_M4S4_PHYCLK_DSI_LINK0_RXCLKESC0, "phyclk_mipi_phy_m_rxclkesc0_m4s4_phyclk_dsi_link0_rxclkesc0", "mout_phyclk_mipi_phy_m_rxclkesc0_m4s4_user", CLK_ENABLE_PHYCLK_MIPI_PHY_M_RXCLKESC0_M4S4, 0, 0, 0),
+	GATE(CLK_SCLK_MI2S_AUD_SCLK_MI2S_I2SCODCLKI, "sclk_mi2s_aud_sclk_mi2s_i2scodclki", "dout_sclk_mi2s_aud", CLK_ENABLE_SCLK_MI2S_AUD, 0, 0, 0),
+	GATE(CLK_SCLK_MIXER_AUD_SYSCLK, "sclk_mixer_aud_sysclk", "dout_sclk_mixer_aud", CLK_ENABLE_SCLK_MIXER_AUD, 0, 0, 0),
+	GATE(CLK_IOCLK_AUD_I2S_SCLK_AP_IN_SCLK_MI2S_AUD_SCLK_AP_IN, "ioclk_aud_i2s_sclk_ap_in_sclk_mi2s_aud_sclk_ap_in", "ioclk_aud_i2s_sclk_ap_in", CLK_ENABLE_IOCLK_AUD_I2S_SCLK_AP_IN, 0, 0, 0),
+	GATE(CLK_IOCLK_AUD_I2S_BCLK_BT_IN_SCLK_MI2S_AUD_BCLK_BT_IN, "ioclk_aud_i2s_bclk_bt_in_sclk_mi2s_aud_bclk_bt_in", "ioclk_aud_i2s_bclk_bt_in", CLK_ENABLE_IOCLK_AUD_I2S_BCLK_BT_IN, 0, 0, 0),
+	GATE(CLK_IOCLK_AUD_I2S_BCLK_CP_IN_SCLK_MI2S_AUD_BCLK_CP_IN, "ioclk_aud_i2s_bclk_cp_in_sclk_mi2s_aud_bclk_cp_in", "ioclk_aud_i2s_bclk_cp_in", CLK_ENABLE_IOCLK_AUD_I2S_BCLK_CP_IN, 0, 0, 0),
+	GATE(CLK_IOCLK_AUD_I2S_BCLK_FM_IN_SCLK_MI2S_AUD_BCLK_FM_IN, "ioclk_aud_i2s_bclk_fm_in_sclk_mi2s_aud_bclk_fm_in", "ioclk_aud_i2s_bclk_fm_in", CLK_ENABLE_IOCLK_AUD_I2S_BCLK_FM_IN, 0, 0, 0),
+};
+
+static const struct samsung_cmu_info dispaud_cmu_info __initconst = {
+	.fixed_clks		= dispaud_fixed_rate_clks,
+	.nr_fixed_clks		= ARRAY_SIZE(dispaud_fixed_rate_clks),
+	.mux_clks		= dispaud_mux_clks,
+	.nr_mux_clks		= ARRAY_SIZE(dispaud_mux_clks),
+	.div_clks		= dispaud_div_clks,
+	.nr_div_clks		= ARRAY_SIZE(dispaud_div_clks),
+	.gate_clks		= dispaud_gate_clks,
+	.nr_gate_clks		= ARRAY_SIZE(dispaud_gate_clks),
+	.nr_clk_ids		= DISPAUD_NR_CLK,
+	.clk_regs		= dispaud_clk_regs,
+	.nr_clk_regs		= ARRAY_SIZE(dispaud_clk_regs),
+};
+
+static void __init exynos3475_cmu_dispaud_init(struct device_node *np)
+{
+	samsung_cmu_register_one(np, &dispaud_cmu_info);
+}
+CLK_OF_DECLARE(exynos3475_cmu_dispaud, "samsung,exynos3475-cmu-dispaud",
+		exynos3475_cmu_dispaud_init);
+
 /* Register Offset definitions for CMU_FSYS (0x13730000) */
 #define USB_PLL_LOCK					0x0000
 #define USB_PLL_CON0					0x0100
@@ -569,6 +697,11 @@ CLK_OF_DECLARE(exynos3475_cmu_peri, "samsung,exynos3475-cmu-peri",
 #define CLK_ENABLE_SCLK_BUS_PLL_TOP			0x840
 #define CLK_ENABLE_SCLK_MEDIA_PLL_TOP			0x844
 
+#define CLK_ENABLE_ACLK_DISPAUD_133_MIF			0x82C
+#define CLK_ENABLE_ACLK_ISP_300_MIF			0x830
+#define CLK_ENABLE_SCLK_DISP_DECON_INT_ECLK		0x834
+#define CLK_ENABLE_SCLK_DISP_DECON_INT_VCLK		0x838
+
 PNAME(mout_div2_mem0_pll_p) = {"mem0_pll", "ffac_mem0_pll_div2"};
 PNAME(mout_div2_media_pll_p) = {"media_pll", "ffac_media_pll_div2"};
 PNAME(mout_clkm_phy_a_p) = {"mout_div2_media_pll", "mout_div2_mem0_pll"};
@@ -619,6 +752,10 @@ static const unsigned long mif_clk_regs[] __initconst = {
 	CLK_ENABLE_ACLK_CPU_800,
 	CLK_ENABLE_SCLK_MEDIA_PLL_TOP,
 	CLK_ENABLE_SCLK_BUS_PLL_TOP,
+	CLK_ENABLE_ACLK_DISPAUD_133_MIF,
+	CLK_ENABLE_ACLK_ISP_300_MIF,
+	CLK_ENABLE_SCLK_DISP_DECON_INT_ECLK,
+	CLK_ENABLE_SCLK_DISP_DECON_INT_VCLK,
 };
 
 static const struct samsung_mux_clock mif_mux_clks[] __initconst = {
@@ -659,6 +796,10 @@ static const struct samsung_gate_clock mif_gate_clks[] __initconst = {
 	GATE(CLK_ACLK_CPU_800, "aclk_cpu_800", "bus_pll", CLK_ENABLE_ACLK_CPU_800, 0, CLK_IGNORE_UNUSED, 0),
 	GATE(CLK_SCLK_MEDIA_PLL_TOP, "sclk_media_pll_top", "ffac_media_pll_div2", CLK_ENABLE_SCLK_MEDIA_PLL_TOP, 0, CLK_IGNORE_UNUSED, 0),
 	GATE(CLK_SCLK_BUS_PLL_TOP, "sclk_bus_pll_top", "bus_pll", CLK_ENABLE_SCLK_BUS_PLL_TOP, 0, CLK_IGNORE_UNUSED, 0),
+	GATE(0, "aclk_dispaud_133", "dout_aclk_dispaud_133", CLK_ENABLE_ACLK_DISPAUD_133_MIF, 0, CLK_IGNORE_UNUSED, 0),
+	GATE(0, "aclk_isp_300", "dout_aclk_isp_300", CLK_ENABLE_ACLK_ISP_300_MIF, 0, CLK_IGNORE_UNUSED, 0),
+	GATE(0, "sclk_decon_int_eclk_i", "dout_sclk_disp_decon_int_eclk", CLK_ENABLE_SCLK_DISP_DECON_INT_ECLK, 0, CLK_IGNORE_UNUSED, 0),
+	GATE(0, "sclk_decon_int_vclk_i", "dout_sclk_disp_decon_int_vclk", CLK_ENABLE_SCLK_DISP_DECON_INT_VCLK, 0, CLK_IGNORE_UNUSED, 0),
 };
 
 struct samsung_pll_rate_table table_bus[] = {
