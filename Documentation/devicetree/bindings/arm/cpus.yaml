@@ -188,6 +188,7 @@ properties:
       - nvidia,tegra132-denver
       - nvidia,tegra186-denver
       - nvidia,tegra194-carmel
+      - samsung,mongoose-m2
       - qcom,krait
       - qcom,kryo
       - qcom,kryo240
