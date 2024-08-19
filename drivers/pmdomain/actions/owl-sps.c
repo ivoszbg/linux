@@ -28,6 +28,7 @@ struct owl_sps_domain_info {
 struct owl_sps_info {
 	unsigned num_domains;
 	const struct owl_sps_domain_info *domains;
+	u32 ack_reg;
 };
 
 struct owl_sps {
@@ -53,7 +54,7 @@ static int owl_sps_set_power(struct owl_sps_domain *pd, bool enable)
 	ack_mask = BIT(pd->info->ack_bit);
 	pwr_mask = BIT(pd->info->pwr_bit);
 
-	return owl_sps_set_pg(pd->sps->base, pwr_mask, ack_mask, enable);
+	return owl_sps_set_pg(pd->sps->base, pd->sps->info->ack_reg, pwr_mask, ack_mask, enable);
 }
 
 static int owl_sps_power_on(struct generic_pm_domain *domain)
@@ -193,6 +194,7 @@ static const struct owl_sps_domain_info s500_sps_domains[] = {
 static const struct owl_sps_info s500_sps_info = {
 	.num_domains = ARRAY_SIZE(s500_sps_domains),
 	.domains = s500_sps_domains,
+	.ack_reg = 0,
 };
 
 static const struct owl_sps_domain_info s700_sps_domains[] = {
@@ -233,6 +235,7 @@ static const struct owl_sps_domain_info s700_sps_domains[] = {
 static const struct owl_sps_info s700_sps_info = {
 	.num_domains = ARRAY_SIZE(s700_sps_domains),
 	.domains = s700_sps_domains,
+	.ack_reg = 0,
 };
 
 static const struct owl_sps_domain_info s900_sps_domains[] = {
@@ -289,6 +292,7 @@ static const struct owl_sps_domain_info s900_sps_domains[] = {
 static const struct owl_sps_info s900_sps_info = {
 	.num_domains = ARRAY_SIZE(s900_sps_domains),
 	.domains = s900_sps_domains,
+	.ack_reg = 0,
 };
 
 static const struct of_device_id owl_sps_of_matches[] = {

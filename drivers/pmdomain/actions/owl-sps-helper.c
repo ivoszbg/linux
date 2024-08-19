@@ -14,16 +14,18 @@
 
 #define OWL_SPS_PG_CTL	0x0
 
-int owl_sps_set_pg(void __iomem *base, u32 pwr_mask, u32 ack_mask, bool enable)
+int owl_sps_set_pg(void __iomem *base, u32 ack_reg, u32 pwr_mask, u32 ack_mask, bool enable)
 {
 	u32 val;
 	bool ack;
 	int timeout;
 
-	val = readl(base + OWL_SPS_PG_CTL);
+	val = readl(base + OWL_SPS_PG_CTL + ack_reg);
 	ack = val & ack_mask;
 	if (ack == enable)
 		return 0;
+
+	val = readl(base + OWL_SPS_PG_CTL);
 
 	if (enable)
 		val |= pwr_mask;
@@ -33,7 +35,7 @@ int owl_sps_set_pg(void __iomem *base, u32 pwr_mask, u32 ack_mask, bool enable)
 	writel(val, base + OWL_SPS_PG_CTL);
 
 	for (timeout = 5000; timeout > 0; timeout -= 50) {
-		val = readl(base + OWL_SPS_PG_CTL);
+		val = readl(base + OWL_SPS_PG_CTL + ack_reg);
 		if ((val & ack_mask) == (enable ? ack_mask : 0))
 			break;
 		udelay(50);
