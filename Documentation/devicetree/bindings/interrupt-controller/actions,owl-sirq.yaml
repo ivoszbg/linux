@@ -11,12 +11,13 @@ maintainers:
   - Cristian Ciocaltea <cristian.ciocaltea@gmail.com>
 
 description: |
-  This interrupt controller is found in the Actions Semi Owl SoCs (S500, S700
-  and S900) and provides support for handling up to 3 external interrupt lines.
+  This interrupt controller is found in the Actions Semi Owl SoCs (ATM7051, S500,
+  S700 and S900) and provides support for handling up to 3 external interrupt lines.
 
 properties:
   compatible:
     enum:
+      - actions,atm7051-sirq
       - actions,s500-sirq
       - actions,s700-sirq
       - actions,s900-sirq
