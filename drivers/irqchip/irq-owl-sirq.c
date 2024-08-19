@@ -347,6 +347,7 @@ static int __init owl_sirq_s500_of_init(struct device_node *node,
 	return owl_sirq_init(&owl_sirq_s500_params, node, parent);
 }
 
+IRQCHIP_DECLARE(owl_sirq_atm7051, "actions,atm7051-sirq", owl_sirq_s500_of_init);
 IRQCHIP_DECLARE(owl_sirq_s500, "actions,s500-sirq", owl_sirq_s500_of_init);
 IRQCHIP_DECLARE(owl_sirq_s700, "actions,s700-sirq", owl_sirq_s500_of_init);
 
