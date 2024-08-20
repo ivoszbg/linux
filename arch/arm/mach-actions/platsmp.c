@@ -24,18 +24,150 @@
 
 #define OWL_CPU1_ADDR	0x50
 #define OWL_CPU1_FLAG	0x5c
+#define OWL_ATM7051_CPU1_ADDR	0x50
+#define OWL_ATM7051_CPU1_FLAG	0x54
 
 #define OWL_CPUx_FLAG_BOOT	0x55aa
 
+#define OWL_SPS_PG_ACK	0x4
 #define OWL_SPS_PG_CTL_PWR_CPU2	BIT(5)
 #define OWL_SPS_PG_CTL_PWR_CPU3	BIT(6)
 #define OWL_SPS_PG_CTL_ACK_CPU2	BIT(21)
 #define OWL_SPS_PG_CTL_ACK_CPU3	BIT(22)
+#define OWL_ATM7051_SPS_PG_CTL_ACK_PWR_CPU1	BIT(0)
+#define OWL_ATM7051_SPS_PG_CTL_ACK_PWR_CPU2	BIT(1)
+#define OWL_ATM7051_SPS_PG_CTL_ACK_PWR_CPU3	BIT(8)
 
 static void __iomem *scu_base_addr;
 static void __iomem *sps_base_addr;
 static void __iomem *timer_base_addr;
 static int ncores;
+
+static int atm7051_wakeup_secondary(unsigned int cpu)
+{
+	int ret;
+
+	if (cpu > 3)
+		return -EINVAL;
+
+	/* The generic PM domain driver is not available this early. */
+	switch (cpu) {
+	case 1:
+		ret = owl_sps_set_pg(sps_base_addr,
+		                     OWL_SPS_PG_ACK,
+		                     OWL_ATM7051_SPS_PG_CTL_ACK_PWR_CPU1,
+				     OWL_ATM7051_SPS_PG_CTL_ACK_PWR_CPU1, true);
+		if (ret)
+			return ret;
+		break;
+	case 2:
+		ret = owl_sps_set_pg(sps_base_addr,
+		                     OWL_SPS_PG_ACK,
+		                     OWL_ATM7051_SPS_PG_CTL_ACK_PWR_CPU2,
+				     OWL_ATM7051_SPS_PG_CTL_ACK_PWR_CPU2, true);
+		if (ret)
+			return ret;
+		break;
+	case 3:
+		ret = owl_sps_set_pg(sps_base_addr,
+				     OWL_SPS_PG_ACK,
+		                     OWL_ATM7051_SPS_PG_CTL_ACK_PWR_CPU3,
+				     OWL_ATM7051_SPS_PG_CTL_ACK_PWR_CPU3, true);
+		if (ret)
+			return ret;
+		break;
+	}
+
+	/* wait for CPUx to run to WFE instruction */
+	udelay(200);
+
+	writel(__pa_symbol(secondary_startup),
+	       timer_base_addr + OWL_ATM7051_CPU1_ADDR + (cpu - 1) * 8);
+	writel(OWL_CPUx_FLAG_BOOT,
+	       timer_base_addr + OWL_ATM7051_CPU1_FLAG + (cpu - 1) * 8);
+
+	dsb_sev();
+	mb();
+
+	return 0;
+}
+
+static int atm7051_smp_boot_secondary(unsigned int cpu, struct task_struct *idle)
+{
+	int ret;
+
+	ret = atm7051_wakeup_secondary(cpu);
+	if (ret)
+		return ret;
+
+	udelay(10);
+
+	smp_send_reschedule(cpu);
+
+	writel(0, timer_base_addr + OWL_ATM7051_CPU1_ADDR + (cpu - 1) * 8);
+	writel(0, timer_base_addr + OWL_ATM7051_CPU1_FLAG + (cpu - 1) * 8);
+
+	return 0;
+}
+
+static void __init atm7051_smp_prepare_cpus(unsigned int max_cpus)
+{
+	struct device_node *node;
+
+	node = of_find_compatible_node(NULL, NULL, "actions,atm7051-timer");
+	if (!node) {
+		pr_err("%s: missing timer\n", __func__);
+		return;
+	}
+
+	timer_base_addr = of_iomap(node, 0);
+	if (!timer_base_addr) {
+		pr_err("%s: could not map timer registers\n", __func__);
+		return;
+	}
+
+	node = of_find_compatible_node(NULL, NULL, "actions,atm7051-sps");
+	if (!node) {
+		pr_err("%s: missing sps\n", __func__);
+		return;
+	}
+
+	sps_base_addr = of_iomap(node, 0);
+	if (!sps_base_addr) {
+		pr_err("%s: could not map sps registers\n", __func__);
+		return;
+	}
+
+	if (read_cpuid_part() == ARM_CPU_PART_CORTEX_A5) {
+		node = of_find_compatible_node(NULL, NULL, "arm,cortex-a5-scu");
+		if (!node) {
+			pr_err("%s: missing scu\n", __func__);
+			return;
+		}
+
+		scu_base_addr = of_iomap(node, 0);
+		if (!scu_base_addr) {
+			pr_err("%s: could not map scu registers\n", __func__);
+			return;
+		}
+
+		/*
+		 * While the number of cpus is gathered from dt, also get the
+		 * number of cores from the scu to verify this value when
+		 * booting the cores.
+		 */
+		ncores = scu_get_core_count(scu_base_addr);
+		pr_debug("%s: ncores %d\n", __func__, ncores);
+
+		scu_enable(scu_base_addr);
+	}
+}
+
+static const struct smp_operations atm7051_smp_ops __initconst = {
+	.smp_prepare_cpus = atm7051_smp_prepare_cpus,
+	.smp_boot_secondary = atm7051_smp_boot_secondary,
+};
+CPU_METHOD_OF_DECLARE(atm7051_smp, "actions,atm7051-smp", &atm7051_smp_ops);
 
 static int s500_wakeup_secondary(unsigned int cpu)
 {
@@ -48,6 +180,7 @@ static int s500_wakeup_secondary(unsigned int cpu)
 	switch (cpu) {
 	case 2:
 		ret = owl_sps_set_pg(sps_base_addr,
+				     0,
 		                     OWL_SPS_PG_CTL_PWR_CPU2,
 				     OWL_SPS_PG_CTL_ACK_CPU2, true);
 		if (ret)
@@ -55,6 +188,7 @@ static int s500_wakeup_secondary(unsigned int cpu)
 		break;
 	case 3:
 		ret = owl_sps_set_pg(sps_base_addr,
+				     0,
 		                     OWL_SPS_PG_CTL_PWR_CPU3,
 				     OWL_SPS_PG_CTL_ACK_CPU3, true);
 		if (ret)
