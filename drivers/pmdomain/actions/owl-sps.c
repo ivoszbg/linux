@@ -14,6 +14,7 @@
 #include <linux/property.h>
 #include <linux/pm_domain.h>
 #include <linux/soc/actions/owl-sps.h>
+#include <dt-bindings/power/owl-atm7051-powergate.h>
 #include <dt-bindings/power/owl-s500-powergate.h>
 #include <dt-bindings/power/owl-s700-powergate.h>
 #include <dt-bindings/power/owl-s900-powergate.h>
@@ -39,6 +40,7 @@ struct owl_sps {
 	struct generic_pm_domain *domains[];
 };
 
+#define OWL_SPS_PG_ACK	0x4
 #define to_owl_pd(gpd) container_of(gpd, struct owl_sps_domain, genpd)
 
 struct owl_sps_domain {
@@ -140,6 +142,42 @@ static int owl_sps_probe(struct platform_device *pdev)
 
 	return 0;
 }
+
+static const struct owl_sps_domain_info atm7051_sps_domains[] = {
+	[ATM7051_PD_CPU2] = {
+		.name = "CPU2",
+		.pwr_bit = 1,
+		.ack_bit = 1,
+		.genpd_flags = GENPD_FLAG_ALWAYS_ON,
+	},
+	[ATM7051_PD_CPU3] = {
+		.name = "CPU3",
+		.pwr_bit = 8,
+		.ack_bit = 8,
+		.genpd_flags = GENPD_FLAG_ALWAYS_ON,
+	},
+	[ATM7051_PD_GPU] = {
+		.name = "GPU",
+		.pwr_bit = 2,
+		.ack_bit = 2,
+	},
+	[ATM7051_PD_VDE] = {
+		.name = "VDE",
+		.pwr_bit = 5,
+		.ack_bit = 5,
+	},
+	[ATM7051_PD_VCE] = {
+		.name = "VCE",
+		.pwr_bit = 4,
+		.ack_bit = 4,
+	},
+};
+
+static const struct owl_sps_info atm7051_sps_info = {
+	.num_domains = ARRAY_SIZE(atm7051_sps_domains),
+	.domains = atm7051_sps_domains,
+	.ack_reg = OWL_SPS_PG_ACK,
+};
 
 static const struct owl_sps_domain_info s500_sps_domains[] = {
 	[S500_PD_VDE] = {
@@ -296,6 +334,7 @@ static const struct owl_sps_info s900_sps_info = {
 };
 
 static const struct of_device_id owl_sps_of_matches[] = {
+	{ .compatible = "actions,atm7051-sps", .data = &atm7051_sps_info },
 	{ .compatible = "actions,s500-sps", .data = &s500_sps_info },
 	{ .compatible = "actions,s700-sps", .data = &s700_sps_info },
 	{ .compatible = "actions,s900-sps", .data = &s900_sps_info },
