@@ -57,6 +57,7 @@ properties:
         items:
           - enum:
               - samsung,xcover3velte            # Samsung Galaxy Xcover 3 Value Edition (G389F)
+              - samsung,j2lte                   # Samsung Galaxy J2 2016 (J200F)
           - const: samsung,exynos3475
 
       - description: Samsung ARTIK5 boards
