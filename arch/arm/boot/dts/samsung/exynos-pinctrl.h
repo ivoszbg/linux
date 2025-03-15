@@ -56,14 +56,6 @@
 #define EXYNOS3475_PIN_DRV_SLOW_SR5	0xc
 #define EXYNOS3475_PIN_DRV_SLOW_SR6	0xf
 
-/* Drive strengths for Exynos850 GPIO_HSI block */
-#define EXYNOS850_HSI_PIN_DRV_LV1	0	/* 1x   */
-#define EXYNOS850_HSI_PIN_DRV_LV1_5	1	/* 1.5x */
-#define EXYNOS850_HSI_PIN_DRV_LV2	2	/* 2x   */
-#define EXYNOS850_HSI_PIN_DRV_LV2_5	3	/* 2.5x */
-#define EXYNOS850_HSI_PIN_DRV_LV3	4	/* 3x   */
-#define EXYNOS850_HSI_PIN_DRV_LV4	5	/* 4x   */
-
 #define EXYNOS_PIN_FUNC_INPUT		0
 #define EXYNOS_PIN_FUNC_OUTPUT		1
 #define EXYNOS_PIN_FUNC_2		2
